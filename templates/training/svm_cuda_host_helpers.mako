@@ -45,6 +45,8 @@ size_t rowPitch;
 
 #  define CUDA_SAFE_CALL( call)     CUDA_SAFE_CALL_NO_SYNC(call);            \
 
+// Keep the following two functions here, called internally when
+// allocating data on the GPU
 void align_host_data(int nPoints, int nDimension) {
     hostPitchInFloats = nPoints;
     if (devDataPitch == nPoints * sizeof(float)) {
@@ -66,7 +68,7 @@ void align_host_data(int nPoints, int nDimension) {
     }
 }
 
-void alloc_transpose_point_data_on_CPU(int nPoints, int nDimension) {
+void alloc_transposed_point_data_on_CPU(int nPoints, int nDimension) {
     // Transpose training data on the CPU
     if (transposedData == 0) {
         transposedData = (float*)malloc(sizeof(float) * nPoints * nDimension);
@@ -82,7 +84,6 @@ void alloc_transpose_point_data_on_CPU(int nPoints, int nDimension) {
 }
 
 void alloc_transposed_point_data_on_GPU(int nPoints, int nDimension) {
-    printf("alloc transposed data on GPU\n");
     // Allocate transposed training data on the GPU
     CUDA_SAFE_CALL(cudaMallocPitch((void**)&devTransposedData,
                    &devTransposedDataPitch,
@@ -108,7 +109,7 @@ void alloc_point_data_on_GPU(int nPoints, int nDimension) {
     CUDA_SAFE_CALL(cudaMallocPitch((void**)&devData, &devDataPitch, nPoints*sizeof(float), nDimension));
     CUT_CHECK_ERROR("Alloc point data on GPU failed: ");
     align_host_data(nPoints, nDimension);
-    alloc_transpose_point_data_on_CPU(nPoints, nDimension);
+    alloc_transposed_point_data_on_CPU(nPoints, nDimension);
     alloc_transposed_point_data_on_GPU(nPoints, nDimension);
     copy_transposed_point_data_CPU_to_GPU(nPoints, nDimension);
 }
@@ -129,22 +130,10 @@ void copy_labels_CPU_to_GPU(int nPoints) {
     CUT_CHECK_ERROR("Copy labels from CPU to GPU failed: ");
 }
 
-void alloc_kernel_diag_on_GPU(int nPoints) {
-    // Allocate kernel diagonal elements (?) on the GPU
-    CUDA_SAFE_CALL(cudaMalloc((void**)&devKernelDiag, nPoints*sizeof(float)));
-    CUT_CHECK_ERROR("Alloc kernelDiag on GPU failed: ");
-}
-    
 void alloc_alphas_on_GPU(int nPoints) {
     // Allocate support vectors on the GPU
     CUDA_SAFE_CALL(cudaMalloc((void**)&devAlpha, nPoints*sizeof(float)));
     CUT_CHECK_ERROR("Alloc alphas on GPU failed: ");
-}
-    
-void alloc_F_on_GPU(int nPoints) {
-    // Allocate the error array on the GPU
-    CUDA_SAFE_CALL(cudaMalloc((void**)&devF, nPoints*sizeof(float)));
-    CUT_CHECK_ERROR("Alloc F on GPU failed: ");
 }
     
 void alloc_result_on_GPU() {
@@ -152,52 +141,29 @@ void alloc_result_on_GPU() {
     CUT_CHECK_ERROR("Alloc result on GPU failed: ");
 }
 
-void alloc_helper_structures_on_GPU(int blockWidth) {
-    CUDA_SAFE_CALL(cudaMalloc((void**)&devLocalFsRL, blockWidth*sizeof(float)));
-    CUDA_SAFE_CALL(cudaMalloc((void**)&devLocalFsRH, blockWidth*sizeof(float))); 
-    CUDA_SAFE_CALL(cudaMalloc((void**)&devLocalIndicesRL, blockWidth*sizeof(int)));
-    CUDA_SAFE_CALL(cudaMalloc((void**)&devLocalIndicesRH, blockWidth*sizeof(int)));
-    CUDA_SAFE_CALL(cudaMalloc((void**)&devLocalObjsMaxObj, blockWidth*sizeof(float)));
-    CUDA_SAFE_CALL(cudaMalloc((void**)&devLocalIndicesMaxObj, blockWidth*sizeof(int)));
-    CUT_CHECK_ERROR("Alloc helper structures on GPU failed: ");
-}
-
-void compute_row_pitch(int nPoints) {
-    void* temp;
-    CUDA_SAFE_CALL(cudaMallocPitch(&temp, &rowPitch, nPoints*sizeof(float), 2));
-    CUDA_SAFE_CALL(cudaFree(temp));
-    CUT_CHECK_ERROR("Compute row pitch on GPU failed: ");
-}
-
-void allocate_GPU_cache(int nPoints) {
-    // Determine the size of the cachg
-    size_t remainingMemory;
-    size_t totalMemory;
-    cuMemGetInfo(&remainingMemory, &totalMemory);
-    
-    int sizeOfCache = remainingMemory/((int)rowPitch);
-    sizeOfCache = (int)((float)sizeOfCache*0.95);//If I try to grab all the memory available, it'll fail
-    if (nPoints < sizeOfCache) {
-    	sizeOfCache = nPoints;
+void dealloc_transposed_point_data_on_CPU() {
+    if (transposedDataAlloced) {
+      free(transposedData);
     }
-      	
-    printf("%zd bytes of memory found on device, %zd bytes currently free\n", totalMemory, remainingMemory);
-    printf("%d rows of kernel matrix will be cached (%d bytes per row)\n", sizeOfCache, (int)rowPitch);
-    
-    // Allocate cache on the GPU
-    CUDA_SAFE_CALL(cudaMallocPitch((void**)&devCache, &cachePitch, nPoints*sizeof(float), sizeOfCache));
-    CUT_CHECK_ERROR("Alloc cache on GPU failed: ");
-    devCachePitchInFloats = (int)cachePitch/(sizeof(float));
-}
-
-void dealloc_point_data_on_GPU(){
-    cudaFree(devData);
-    CUT_CHECK_ERROR("Dealloc point data on GPU failed: ");
 }
 
 void dealloc_transposed_point_data_on_GPU(){
     cudaFree(devTransposedData);
     CUT_CHECK_ERROR("Dealloc transposed point data on GPU failed: ");
+}
+
+void dealloc_host_data_on_CPU() {
+    if (hostDataAlloced) {
+      free(hostData);
+    }
+}
+
+void dealloc_point_data_on_GPU(){
+    cudaFree(devData);
+    CUT_CHECK_ERROR("Dealloc point data on GPU failed: ");
+    dealloc_transposed_point_data_on_CPU();
+    dealloc_transposed_point_data_on_GPU();
+    dealloc_host_data_on_CPU();
 }
 
 void dealloc_labels_on_GPU(){
@@ -210,24 +176,72 @@ void dealloc_alphas_on_GPU(){
     CUT_CHECK_ERROR("Dealloc alphas on GPU failed: ");
 }
 
-void dealloc_devF_on_GPU(){
-    cudaFree(devF);
-    CUT_CHECK_ERROR("Dealloc F on GPU failed: ");
-}
-
-void dealloc_devCache_on_GPU(){
-    cudaFree(devCache);
-    CUT_CHECK_ERROR("Dealloc cache on GPU failed: ");
-}
-
-void dealloc_helper_structures_on_GPU(){
-    cudaFree(devLocalIndicesRL);
-    cudaFree(devLocalIndicesRH);
-    cudaFree(devLocalFsRH);
-    cudaFree(devLocalFsRL);
-    cudaFree(devKernelDiag);
+void dealloc_result_on_GPU(){
     cudaFree(devResult);
-    cudaFree(devLocalIndicesMaxObj);
-    cudaFree(devLocalObjsMaxObj);
-    CUT_CHECK_ERROR("Dealloc helper structures on GPU failed: ");
+    CUT_CHECK_ERROR("Dealloc result on GPU failed: ");
 }
+
+void printModel(const char* outputFile, int kernel_type, float gamma, float coef0, float degree, float* alpha, float* labels, float* data, int nPoints, int nDimension, float epsilon) { 
+
+	printf("Output File: %s\n", outputFile);
+	FILE* outputFilePointer = fopen(outputFile, "w");
+	if (outputFilePointer == NULL) {
+		printf("Can't write %s\n", outputFile);
+		exit(1);
+	}
+
+	int nSV = 0;
+	int pSV = 0;
+	for(int i = 0; i < nPoints; i++) {
+		if (alpha[i] > epsilon) {
+			if (labels[i] > 0) {
+				pSV++;
+			} else {
+				nSV++;
+			}
+		}
+	}
+
+  bool printGamma = false;
+  bool printCoef0 = false;
+  bool printDegree = false;
+  if (kernel_type == 2) {
+    printGamma = true;
+    printCoef0 = true;
+    printDegree = true;
+  } else if (kernel_type == 1) {
+    printGamma = true;
+  } else if (kernel_type == 3) {
+    printGamma = true;
+    printCoef0 = true;
+  }
+	
+	fprintf(outputFilePointer, "svm_type c_svc\n");
+	fprintf(outputFilePointer, "kernel_type %d\n", kernel_type);
+  if (printDegree) {
+    fprintf(outputFilePointer, "degree %f\n", degree);
+  }
+  if (printGamma) {
+    fprintf(outputFilePointer, "gamma %f\n", gamma);
+  }
+  if (printCoef0) {
+    fprintf(outputFilePointer, "coef0 %f\n", coef0);
+  }
+	fprintf(outputFilePointer, "nr_class 2\n");
+	fprintf(outputFilePointer, "total_sv %d\n", nSV + pSV);
+	//fprintf(outputFilePointer, "rho %.10f\n", kp.b);
+	fprintf(outputFilePointer, "label 1 -1\n");
+	fprintf(outputFilePointer, "nr_sv %d %d\n", pSV, nSV);
+	fprintf(outputFilePointer, "SV\n");
+	for (int i = 0; i < nPoints; i++) {
+		if (alpha[i] > epsilon) {
+			fprintf(outputFilePointer, "%.10f ", labels[i]*alpha[i]);
+			for (int j = 0; j < nDimension; j++) {
+				fprintf(outputFilePointer, "%d:%.10f ", j+1, data[j*nPoints + i]);
+			}
+			fprintf(outputFilePointer, "\n");
+		}
+	}
+	fclose(outputFilePointer);
+}
+

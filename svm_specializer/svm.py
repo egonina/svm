@@ -163,12 +163,8 @@ class SVM(object):
     labels_cpu_copy = None
     alphas_gpu_copy = None
     alphas_cpu_copy = None
-    F_gpu_copy = None
-    F_cpu_copy = None
     result_gpu_copy = None
     result_cpu_copy = None
-    cache_gpu_copy = None
-    cache_cpu_copy = None
     
     #Internal functions to allocate and deallocate component and event data on the CPU and GPU
     def internal_alloc_point_data(self, X):
@@ -184,7 +180,6 @@ class SVM(object):
     def internal_free_point_data(self):
         if SVM is None: return
         if SVM.point_data_cpu_copy is not None:
-            self.get_asp_mod().dealloc_point_data_on_CPU()
             SVM.point_data_cpu_copy = None
         if SVM.point_data_gpu_copy is not None:
             self.get_asp_mod().dealloc_point_data_on_GPU()
@@ -225,7 +220,22 @@ class SVM(object):
             self.get_asp_mod().dealloc_alphas_on_GPU()
             SVM.alphas_gpu_copy = None
 
-    #TODO, add allocation for the rest of the data structures
+    def internal_alloc_result(self, R):
+        if SVM.result_cpu_copy:
+            self.internal_free_result()
+        self.get_asp_mod().alloc_result_on_CPU(R)
+        SVM.result_cpu_copy = R 
+        if SVM.use_cuda:
+            self.get_asp_mod().alloc_result_on_GPU()
+            SVM.result_gpu_copy = R 
+
+    def internal_free_result(self):
+        if SVM is None: return
+        if SVM.result_cpu_copy is not None:
+            SVM.result_cpu_copy = None
+        if SVM.result_gpu_copy is not None:
+            self.get_asp_mod().dealloc_result_on_GPU()
+            SVM.result_gpu_copy = None
 
     def __init__(self): 
         self.names_of_backends_to_use = SVM.names_of_backends_to_use
@@ -350,7 +360,7 @@ class SVM(object):
 
     def insert_non_rendered_code_into_module(self):
         #TODO: Move this back into insert_base_code_into_listed_modules for cuda 4.1
-        names_of_helper_funcs = ["alloc_point_data_on_CPU", "alloc_labels_on_CPU", "alloc_alphas_on_CPU", "dealloc_point_data_on_CPU"]
+        names_of_helper_funcs = ["alloc_point_data_on_CPU", "alloc_labels_on_CPU", "alloc_alphas_on_CPU", "alloc_result_on_CPU"]
         for fname in names_of_helper_funcs:
             SVM.asp_mod.add_helper_function(fname, "", 'cuda')
         
@@ -362,7 +372,7 @@ class SVM(object):
         cu_base_rend = cu_base_tpl.render()
         SVM.asp_mod.add_to_module([Line(cu_base_rend)],'cuda')
         #Add Boost interface links for helper functions
-        names_of_cuda_helper_funcs = ["alloc_point_data_on_GPU", "alloc_labels_on_GPU","alloc_alphas_on_GPU", "copy_point_data_CPU_to_GPU", "copy_labels_CPU_to_GPU", "dealloc_point_data_on_GPU","dealloc_labels_on_GPU", "train"] 
+        names_of_cuda_helper_funcs = ["alloc_point_data_on_GPU", "alloc_labels_on_GPU","alloc_alphas_on_GPU", "alloc_result_on_GPU", "copy_point_data_CPU_to_GPU", "copy_labels_CPU_to_GPU", "dealloc_point_data_on_GPU","dealloc_labels_on_GPU", "dealloc_result_on_GPU", "train"] 
         for fname in names_of_cuda_helper_funcs:
             SVM.asp_mod.add_helper_function(fname,"",'cuda')
         c_base_tpl = AspTemplate.Template(filename="templates/training/cache_controller.mako")
@@ -375,19 +385,10 @@ class SVM(object):
         cu_base_rend = cu_base_tpl.render(num_blocks = 128, num_threads = 512)
         SVM.asp_mod.add_to_module([Line(cu_base_rend)],'c++')
 
-    def __del__(self):
-        self.internal_free_point_data()
-        self.internal_free_labels()
+    #def __del__(self):
+        #self.internal_free_point_data()
+        #self.internal_free_labels()
 
-    def train_internal(self):
-        self.get_asp_mod().train(self.N, self.D,
-                                 self.kernel_params.kernel_type,
-                                 self.kernel_params.gamma,
-                                 self.kernel_params.coef0,
-                                 self.kernel_params.degree,
-                                 self.cost,
-                                 self.heuristic, self.epsilon,
-                                 self.tolerance)
 
     def train(self, input_data, labels, kernel_type, 
               paramA = None, paramB = None, paramC = None,
@@ -402,6 +403,7 @@ class SVM(object):
         Allocate Support Vectors.
         """
         alph = np.empty(self.N, dtype=np.float32)
+        result = np.empty(8, dtype=np.float32)
         
         """
         Setup SVM parameters.
@@ -418,10 +420,18 @@ class SVM(object):
         self.internal_alloc_point_data(input_data)
         self.internal_alloc_labels(labels)
         self.internal_alloc_alphas(alph)
+        self.internal_alloc_result(result)
 
         """
         Train the SVM on the data.
         """
-        self.train_internal()
+        self.get_asp_mod().train(self.N, self.D,
+                                 self.kernel_params.kernel_type,
+                                 self.kernel_params.gamma,
+                                 self.kernel_params.coef0,
+                                 self.kernel_params.degree,
+                                 self.cost,
+                                 self.heuristic, self.epsilon,
+                                 self.tolerance)
 
-        return alphas
+        return 

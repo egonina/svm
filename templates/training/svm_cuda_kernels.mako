@@ -916,7 +916,6 @@ __global__ void secondOrderPhaseFour(float* devLabels, float* devKernelDiag, flo
     }
   }
   __syncthreads();
-
   
   argmaxReduce(tempValues, tempIndices);
 

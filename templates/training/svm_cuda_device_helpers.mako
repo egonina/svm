@@ -6,9 +6,6 @@
 #define MAX_PITCH 262144
 #define MAX_POINTS (MAX_PITCH/sizeof(float) - 2)
 
-#define intDivideRoundUp(a, b) (a%b!=0)?(a/b+1):(a/b)
-
-
 #ifdef __DEVICE_EMULATION__
 #define SYNC __syncthreads()
 #else
