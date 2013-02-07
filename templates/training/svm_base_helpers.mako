@@ -41,6 +41,7 @@ void alloc_train_alphas_on_CPU(PyObject *input_alphas) {
 void alloc_classify_alphas_on_CPU(PyObject *input_alphas) {
   alphaC = ((float*)PyArray_DATA(input_alphas));
 }
+
 void alloc_train_result_on_CPU(PyObject *input_result) {
   train_result = ((float*)PyArray_DATA(input_result));
 }

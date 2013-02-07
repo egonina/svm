@@ -186,7 +186,7 @@ class SVM(object):
     def internal_free_point_data(self):
         if SVM is None: return
         if SVM.point_data_cpu_copy is not None:
-            SVM.point_data_cpu_copy = None
+            SVM.point_data_cpu_copy = None      # deallocated by the GC
         if SVM.point_data_gpu_copy is not None:
             self.get_asp_mod().dealloc_point_data_on_GPU()
             SVM.point_data_gpu_copy = None
@@ -204,7 +204,7 @@ class SVM(object):
     def internal_free_labels(self):
         if SVM is None: return
         if SVM.labels_cpu_copy is not None:
-            SVM.labels_cpu_copy = None
+            SVM.labels_cpu_copy = None      # dealloced by the GC
         if SVM.labels_gpu_copy is not None:
             self.get_asp_mod().dealloc_labels_on_GPU()
             SVM.labels_gpu_copy = None
@@ -221,7 +221,7 @@ class SVM(object):
     def internal_free_train_alphas(self):
         if SVM is None: return
         if SVM.train_alphas_cpu_copy is not None:
-            SVM.train_alphas_cpu_copy = None
+            SVM.train_alphas_cpu_copy = None     # dealloced by the GC
         if SVM.train_alphas_gpu_copy is not None:
             self.get_asp_mod().dealloc_train_alphas_on_GPU()
             SVM.train_alphas_gpu_copy = None
@@ -233,12 +233,13 @@ class SVM(object):
         SVM.classify_alphas_cpu_copy = A 
         if SVM.use_cuda:
             self.get_asp_mod().alloc_classify_alphas_on_GPU(A.shape[0])
+            self.get_asp_mod().copy_classify_alphas_CPU_to_GPU(A.shape[0]);
             SVM.classify_alphas_gpu_copy = A 
 
     def internal_free_classify_alphas(self):
         if SVM is None: return
         if SVM.classify_alphas_cpu_copy is not None:
-            SVM.classify_alphas_cpu_copy = None
+            SVM.classify_alphas_cpu_copy = None     # dealloced by the GC
         if SVM.classify_alphas_gpu_copy is not None:
             self.get_asp_mod().dealloc_classify_alphas_on_GPU()
             SVM.classify_alphas_gpu_copy = None
@@ -249,13 +250,14 @@ class SVM(object):
         self.get_asp_mod().alloc_support_vectors_on_CPU(V)
         SVM.support_vectors_cpu_copy = V 
         if SVM.use_cuda:
-            self.get_asp_mod().alloc_support_vectors_on_GPU(A.shape[0])
+            self.get_asp_mod().alloc_support_vectors_on_GPU(V.shape[0], V.shape[1])
+            self.get_asp_mod().copy_support_vectors_CPU_to_GPU(V.shape[0], V.shape[1]);
             SVM.support_vectors_gpu_copy = V 
 
     def internal_free_support_vectors(self):
         if SVM is None: return
         if SVM.support_vectors_cpu_copy is not None:
-            SVM.support_vectors_cpu_copy = None
+            SVM.support_vectors_cpu_copy = None     # dealloced by the GC
         if SVM.support_vectors_gpu_copy is not None:
             self.get_asp_mod().dealloc_support_vectors_on_GPU()
             SVM.support_vectors_gpu_copy = None
@@ -272,7 +274,7 @@ class SVM(object):
     def internal_free_train_result(self):
         if SVM is None: return
         if SVM.train_result_cpu_copy is not None:
-            SVM.train_result_cpu_copy = None
+            SVM.train_result_cpu_copy = None     # dealloced by the GC
         if SVM.train_result_gpu_copy is not None:
             self.get_asp_mod().dealloc_train_result_on_GPU()
             SVM.train_result_gpu_copy = None
@@ -283,13 +285,13 @@ class SVM(object):
         self.get_asp_mod().alloc_classify_result_on_CPU(R)
         SVM.classify_result_cpu_copy = R 
         if SVM.use_cuda:
-            self.get_asp_mod().alloc_classify_result_on_GPU()
+            self.get_asp_mod().alloc_classify_result_on_GPU(R.shape[0])
             SVM.classify_result_gpu_copy = R 
 
     def internal_free_classify_result(self):
         if SVM is None: return
         if SVM.classify_result_cpu_copy is not None:
-            SVM.classify_result_cpu_copy = None
+            SVM.classify_result_cpu_copy = None     # dealloced by the GC
         if SVM.classify_result_gpu_copy is not None:
             self.get_asp_mod().dealloc_classify_result_on_GPU()
             SVM.classify_result_gpu_copy = None
@@ -299,6 +301,14 @@ class SVM(object):
         self.param_spaces = SVM.variant_param_default
         self.clf = None # pure python mirror module
 
+    #def __del__(self):
+    #    self.internal_free_point_data()
+    #    self.internal_free_labels()
+    #    self.internal_free_train_alphas()
+    #    self.internal_free_train_result()
+    #    self.internal_free_support_vectors()
+    #    self.internal_free_classify_alphas()
+    #    self.internal_free_classify_result()
 
     #Called the first time a SVM instance tries to use a specialized function
     def initialize_asp_mod(self):
@@ -419,7 +429,13 @@ class SVM(object):
 
     def insert_non_rendered_code_into_module(self):
         #TODO: Move this back into insert_base_code_into_listed_modules for cuda 4.1
-        names_of_helper_funcs = ["alloc_point_data_on_CPU", "alloc_labels_on_CPU", "alloc_train_alphas_on_CPU", "alloc_classify_alphas_on_CPU", "alloc_train_result_on_CPU", "alloc_train_result_on_CPU", "alloc_support_vectors_on_CPU",]
+        names_of_helper_funcs = ["alloc_point_data_on_CPU",\
+                                 "alloc_labels_on_CPU",\
+                                 "alloc_train_alphas_on_CPU",\
+                                 "alloc_classify_alphas_on_CPU",\
+                                 "alloc_train_result_on_CPU",\
+                                 "alloc_classify_result_on_CPU",
+                                 "alloc_support_vectors_on_CPU",]
         for fname in names_of_helper_funcs:
             SVM.asp_mod.add_helper_function(fname, "", 'cuda')
         
@@ -464,11 +480,6 @@ class SVM(object):
         cu_base_tpl = AspTemplate.Template(filename="templates/classification/svm_classify.mako")
         cu_base_rend = cu_base_tpl.render(num_blocks = 128, num_threads = 512)
         SVM.asp_mod.add_to_module([Line(cu_base_rend)],'c++')
-
-    #def __del__(self):
-        #self.internal_free_point_data()
-        #self.internal_free_labels()
-
 
     def train(self, input_data, labels, kernel_type, 
               paramA = None, paramB = None, paramC = None,
@@ -515,6 +526,7 @@ class SVM(object):
                                  self.tolerance)
         
         self.support_vectors, self.alphas, self.rho, self.nSV = train_result
+        self.support_vectors = self.support_vectors.reshape(self.nSV, self.D)
 
         return 
 
@@ -542,10 +554,15 @@ class SVM(object):
         """
         Classify testing data.
         """
-        classify_result = self.get_asp_mod().classify(self.N, self.D,
-                                                      self.nSV,
-                                                      self.kernel_params.kernel_type,
-                                                      self.kernel_params.gamma,
-                                                      self.kernel_params.coef0,
-                                                      self.kernel_params.degree)
+        self.rho = -self.rho
+
+        # writes to classify_result
+        self.get_asp_mod().classify(self.N, self.D,
+                                    self.nSV,
+                                    self.kernel_params.kernel_type,
+                                    self.kernel_params.gamma,
+                                    self.kernel_params.coef0,
+                                    self.kernel_params.degree,
+                                    self.rho)
+
         return classify_result

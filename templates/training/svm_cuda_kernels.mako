@@ -314,8 +314,9 @@ struct Sigmoid {
   }
 };
 
-// =================== INITIALIZE ===================
+// ===================== TRAINIG KERNELS ====================
 
+// =================== INITIALIZE ===================
 template<class Kernel>
 __global__ void initializeArrays(float* devData,
                                  int devDataPitchInFloats,
@@ -325,7 +326,7 @@ __global__ void initializeArrays(float* devData,
                                  float parameterB,
                                  float parameterC,
                                  float* devKernelDiag,
-                                 float* devAlpha,
+                                 float* devAlphaT,
                                  float* devF,
                                  float* devLabels) { 
     int bx = blockIdx.x;
@@ -339,14 +340,14 @@ __global__ void initializeArrays(float* devData,
                                                   devData + (nDimension * devDataPitchInFloats),
                                                   parameterA, parameterB, parameterC);
     	devF[index] = -devLabels[index];
-    	devAlpha[index] = 0;
+    	devAlphaT[index] = 0;
     }
 }
 
 template<class Kernel>
-__global__ void takeFirstStep(void* devResult, float* devKernelDiag,
+__global__ void takeFirstStep(void* devResultT, float* devKernelDiag,
                               float* devData, int devDataPitchInFloats,
-                              float* devAlpha, float cost, int nDimension,
+                              float* devAlphaT, float cost, int nDimension,
                               int iLow, int iHigh, float parameterA,
                               float parameterB, float parameterC) { 
                                      
@@ -369,21 +370,21 @@ __global__ void takeFirstStep(void* devResult, float* devKernelDiag,
     }
     //alpha1New == alpha2New for the first step
     
-    devAlpha[iLow] = alpha2New;
-    devAlpha[iHigh] = alpha2New;
+    devAlphaT[iLow] = alpha2New;
+    devAlphaT[iHigh] = alpha2New;
     
-    *((float*)devResult + 0) = 0.0;
-    *((float*)devResult + 1) = 0.0;
-    *((float*)devResult + 2) = 1.0;
-    *((float*)devResult + 3) = -1.0;
-    *((float*)devResult + 6) = alpha2New;
-    *((float*)devResult + 7) = alpha2New;
+    *((float*)devResultT + 0) = 0.0;
+    *((float*)devResultT + 1) = 0.0;
+    *((float*)devResultT + 2) = 1.0;
+    *((float*)devResultT + 3) = -1.0;
+    *((float*)devResultT + 6) = alpha2New;
+    *((float*)devResultT + 7) = alpha2New;
 }
 
 // =============== FIRSTORDER =============
 
 template<bool iLowCompute, bool iHighCompute, class Kernel>
-  __global__ void	firstOrderPhaseOne(float* devData, int devDataPitchInFloats, float* devTransposedData, int devTransposedDataPitchInFloats, float* devLabels, int nPoints, int nDimension, float epsilon, float cEpsilon, float* devAlpha, float* devF, float alpha1Diff, float alpha2Diff, int iLow, int iHigh, float parameterA, float parameterB, float parameterC, float* devCache, int devCachePitchInFloats, int iLowCacheIndex, int iHighCacheIndex, int* devLocalIndicesRL, int* devLocalIndicesRH, float* devLocalFsRL, float* devLocalFsRH) {
+  __global__ void	firstOrderPhaseOne(float* devData, int devDataPitchInFloats, float* devTransposedData, int devTransposedDataPitchInFloats, float* devLabels, int nPoints, int nDimension, float epsilon, float cEpsilon, float* devAlphaT, float* devF, float alpha1Diff, float alpha2Diff, int iLow, int iHigh, float parameterA, float parameterB, float parameterC, float* devCache, int devCachePitchInFloats, int iLowCacheIndex, int iHighCacheIndex, int* devLocalIndicesRL, int* devLocalIndicesRH, float* devLocalFsRL, float* devLocalFsRH) {
 
 
   extern __shared__ float xIHigh[];
@@ -421,7 +422,7 @@ template<bool iLowCompute, bool iHighCompute, class Kernel>
   int reduceFlag;
   
 	if (globalIndex < nPoints) {
-    alpha = devAlpha[globalIndex];
+    alpha = devAlphaT[globalIndex];
 
 		f = devF[globalIndex];
 		label = devLabels[globalIndex];
@@ -530,7 +531,7 @@ template<bool iLowCompute, bool iHighCompute, class Kernel>
 }
 
 template<class Kernel>
-__global__ void firstOrderPhaseTwo(float* devData, int devDataPitchInFloats, float* devTransposedData, int devTransposedDataPitchInFloats, float* devLabels, float* devKernelDiag, float* devAlpha, void* devResult, float cost, int nDimension, float parameterA, float parameterB, float parameterC, int* devLocalIndicesRL, int* devLocalIndicesRH, float* devLocalFsRL, float* devLocalFsRH, int inputSize) {
+__global__ void firstOrderPhaseTwo(float* devData, int devDataPitchInFloats, float* devTransposedData, int devTransposedDataPitchInFloats, float* devLabels, float* devKernelDiag, float* devAlphaT, void* devResultT, float cost, int nDimension, float parameterA, float parameterB, float parameterC, int* devLocalIndicesRL, int* devLocalIndicesRH, float* devLocalFsRL, float* devLocalFsRH, int inputSize) {
   __shared__ int tempIndices[BLOCKSIZE];
   __shared__ float tempFs[BLOCKSIZE];
   
@@ -585,8 +586,8 @@ __global__ void firstOrderPhaseTwo(float* devData, int devDataPitchInFloats, flo
     float kernelEval = tempFs[0];
     eta = eta - 2*kernelEval;
       
-    float alpha1Old = devAlpha[iHigh];
-    float alpha2Old = devAlpha[iLow];
+    float alpha1Old = devAlphaT[iHigh];
+    float alpha2Old = devAlphaT[iLow];
     float alphaDiff = alpha2Old - alpha1Old;
     float lowLabel = devLabels[iLow];
     float sign = devLabels[iHigh] * lowLabel;
@@ -635,25 +636,25 @@ __global__ void firstOrderPhaseTwo(float* devData, int devDataPitchInFloats, flo
     float alpha1Diff = -sign*alpha2Diff;
     float alpha1New = alpha1Old + alpha1Diff;
 
-    *((float*)devResult + 0) = alpha2Old;
-    *((float*)devResult + 1) = alpha1Old;
-    *((float*)devResult + 2) = bLow;
-    *((float*)devResult + 3) = bHigh;
-    devAlpha[iLow] = alpha2New;
-    devAlpha[iHigh] = alpha1New;
-    *((float*)devResult + 4) = alpha2New;
-    *((float*)devResult + 5) = alpha1New;
-    *((int*)devResult + 6) = iLow;
-    *((int*)devResult + 7) = iHigh;
-    *((float*)devResult + 8) = eta;
-    *((float*)devResult + 9) = kernelEval;
+    *((float*)devResultT + 0) = alpha2Old;
+    *((float*)devResultT + 1) = alpha1Old;
+    *((float*)devResultT + 2) = bLow;
+    *((float*)devResultT + 3) = bHigh;
+    devAlphaT[iLow] = alpha2New;
+    devAlphaT[iHigh] = alpha1New;
+    *((float*)devResultT + 4) = alpha2New;
+    *((float*)devResultT + 5) = alpha1New;
+    *((int*)devResultT + 6) = iLow;
+    *((int*)devResultT + 7) = iHigh;
+    *((float*)devResultT + 8) = eta;
+    *((float*)devResultT + 9) = kernelEval;
   }
 }
 
 // ================= SECONDORDER =================
 
 template<bool iLowCompute, bool iHighCompute, class Kernel>
-  __global__ void	secondOrderPhaseOne(float* devData, int devDataPitchInFloats, float* devTransposedData, int devTransposedDataPitchInFloats, float* devLabels, int nPoints, int nDimension, float epsilon, float cEpsilon, float* devAlpha, float* devF, float alpha1Diff, float alpha2Diff, int iLow, int iHigh, float parameterA, float parameterB, float parameterC, float* devCache, int devCachePitchInFloats, int iLowCacheIndex, int iHighCacheIndex, int* devLocalIndicesRH, float* devLocalFsRH) {
+  __global__ void	secondOrderPhaseOne(float* devData, int devDataPitchInFloats, float* devTransposedData, int devTransposedDataPitchInFloats, float* devLabels, int nPoints, int nDimension, float epsilon, float cEpsilon, float* devAlphaT, float* devF, float alpha1Diff, float alpha2Diff, int iLow, int iHigh, float parameterA, float parameterB, float parameterC, float* devCache, int devCachePitchInFloats, int iLowCacheIndex, int iHighCacheIndex, int* devLocalIndicesRH, float* devLocalFsRH) {
   
 	extern __shared__ float xIHigh[];
   float* xILow;
@@ -687,7 +688,7 @@ template<bool iLowCompute, bool iHighCompute, class Kernel>
   int reduceFlag;
 
 	if (globalIndex < nPoints) {
-		alpha = devAlpha[globalIndex];
+		alpha = devAlphaT[globalIndex];
 		f = devF[globalIndex];
     label = devLabels[globalIndex];
   }
@@ -761,7 +762,7 @@ template<bool iLowCompute, bool iHighCompute, class Kernel>
   }
 }
 
-__global__ void secondOrderPhaseTwo(void* devResult, int* devLocalIndicesRH, float* devLocalFsRH, int inputSize) {
+__global__ void secondOrderPhaseTwo(void* devResultT, int* devLocalIndicesRH, float* devLocalFsRH, int inputSize) {
   __shared__ int tempIndices[BLOCKSIZE];
   __shared__ float tempFs[BLOCKSIZE];
 
@@ -784,13 +785,13 @@ __global__ void secondOrderPhaseTwo(void* devResult, int* devLocalIndicesRH, flo
   float bHigh = tempFs[0];
 
   if (threadIdx.x == 0) {
-    *((float*)devResult + 3) = bHigh;
-    *((int*)devResult + 7) = iHigh;
+    *((float*)devResultT + 3) = bHigh;
+    *((int*)devResultT + 7) = iHigh;
   }
 }
 
 template <bool iHighCompute, class Kernel>
-  __global__ void secondOrderPhaseThree(float* devData, int devDataPitchInFloats, float* devTransposedData, int devTransposedDataPitchInFloats, float* devLabels, float* devKernelDiag, float epsilon, float cEpsilon, float* devAlpha, float* devF, float bHigh, int iHigh, float* devCache, int devCachePitchInFloats, int iHighCacheIndex, int nDimension, int nPoints, float parameterA, float parameterB, float parameterC, float* devLocalFsRL, int* devLocalIndicesMaxObj, float* devLocalObjsMaxObj) {
+  __global__ void secondOrderPhaseThree(float* devData, int devDataPitchInFloats, float* devTransposedData, int devTransposedDataPitchInFloats, float* devLabels, float* devKernelDiag, float epsilon, float cEpsilon, float* devAlphaT, float* devF, float bHigh, int iHigh, float* devCache, int devCachePitchInFloats, int iHighCacheIndex, int nDimension, int nPoints, float parameterA, float parameterB, float parameterC, float* devLocalFsRL, int* devLocalIndicesMaxObj, float* devLocalObjsMaxObj) {
 	extern __shared__ float xIHigh[];
   __shared__ int tempIndices[BLOCKSIZE];
   __shared__ float tempValues[BLOCKSIZE];
@@ -818,7 +819,7 @@ template <bool iHighCompute, class Kernel>
 	float obj;
 	
   if (globalIndex < nPoints) {
-    alpha = devAlpha[globalIndex];
+    alpha = devAlphaT[globalIndex];
 
 		f = devF[globalIndex];
 		label = devLabels[globalIndex];
@@ -897,7 +898,7 @@ template <bool iHighCompute, class Kernel>
 	}
 }
 
-__global__ void secondOrderPhaseFour(float* devLabels, float* devKernelDiag, float* devF, float* devAlpha, float cost, int iHigh, float bHigh, void* devResult, float* devCache, int devCachePitchInFloats, int iHighCacheIndex, float* devLocalFsRL, int* devLocalIndicesMaxObj, float* devLocalObjsMaxObj, int inputSize, int iteration) {
+__global__ void secondOrderPhaseFour(float* devLabels, float* devKernelDiag, float* devF, float* devAlphaT, float cost, int iHigh, float bHigh, void* devResultT, float* devCache, int devCachePitchInFloats, int iHighCacheIndex, float* devLocalFsRL, int* devLocalIndicesMaxObj, float* devLocalObjsMaxObj, int inputSize, int iteration) {
   __shared__ int tempIndices[BLOCKSIZE];
   __shared__ float tempValues[BLOCKSIZE];
 
@@ -974,8 +975,8 @@ __global__ void secondOrderPhaseFour(float* devLabels, float* devKernelDiag, flo
     eta = eta - 2 * (*(devCache + (devCachePitchInFloats * iHighCacheIndex) + iLow));
    
     
-    float alpha1Old = devAlpha[iHigh];
-    float alpha2Old = devAlpha[iLow];
+    float alpha1Old = devAlphaT[iHigh];
+    float alpha2Old = devAlphaT[iLow];
     float alphaDiff = alpha2Old - alpha1Old;
     float lowLabel = devLabels[iLow];
     float sign = devLabels[iHigh] * lowLabel;
@@ -1023,17 +1024,17 @@ __global__ void secondOrderPhaseFour(float* devLabels, float* devKernelDiag, flo
     float alpha2Diff = alpha2New - alpha2Old;
     float alpha1Diff = -sign*alpha2Diff;
     float alpha1New = alpha1Old + alpha1Diff;
-    devAlpha[iLow] = alpha2New;
-    devAlpha[iHigh] = alpha1New;
+    devAlphaT[iLow] = alpha2New;
+    devAlphaT[iHigh] = alpha1New;
    
-    *((float*)devResult + 0) = alpha2Old;
-    *((float*)devResult + 1) = alpha1Old;
-    *((float*)devResult + 2) = bLow;
-    *((float*)devResult + 3) = bHigh;
-    *((float*)devResult + 4) = alpha2New;
-    *((float*)devResult + 5) = alpha1New;
-    *((int*)devResult + 6) = iLow;
-    *((int*)devResult + 7) = iHigh;
+    *((float*)devResultT + 0) = alpha2Old;
+    *((float*)devResultT + 1) = alpha1Old;
+    *((float*)devResultT + 2) = bLow;
+    *((float*)devResultT + 3) = bHigh;
+    *((float*)devResultT + 4) = alpha2New;
+    *((float*)devResultT + 5) = alpha1New;
+    *((int*)devResultT + 6) = iLow;
+    *((int*)devResultT + 7) = iHigh;
   }
 }
 
@@ -1041,7 +1042,7 @@ void launchInitialization(float* devData,
                           int devDataPitchInFloats,
                           int nPoints, int nDimension, int kType,
                           float parameterA, float parameterB, float parameterC,
-                          float* devKernelDiag, float* devAlpha, float* devF,
+                          float* devKernelDiag, float* devAlphaT, float* devF,
                           float* devLabels, dim3 blockConfig, dim3 threadConfig) {
     switch (kType) {
     case LINEAR:
@@ -1052,7 +1053,7 @@ void launchInitialization(float* devData,
                                                                 parameterB,
                                                                 parameterC,
                                                                 devKernelDiag,
-                                                                devAlpha,
+                                                                devAlphaT,
                                                                 devF,
                                                                 devLabels);
         break;
@@ -1064,7 +1065,7 @@ void launchInitialization(float* devData,
                                                                     parameterB,
                                                                     parameterC,
                                                                     devKernelDiag,
-                                                                    devAlpha,
+                                                                    devAlphaT,
                                                                     devF,
                                                                     devLabels);
         break;
@@ -1076,7 +1077,7 @@ void launchInitialization(float* devData,
                                                                   parameterB,
                                                                   parameterC,
                                                                   devKernelDiag,
-                                                                  devAlpha,
+                                                                  devAlphaT,
                                                                   devF,
                                                                   devLabels);
         break;  
@@ -1088,7 +1089,7 @@ void launchInitialization(float* devData,
                                                                  parameterB,
                                                                  parameterC,
                                                                  devKernelDiag,
-                                                                 devAlpha,
+                                                                 devAlphaT,
                                                                  devF,
                                                                  devLabels);
         break;
@@ -1096,19 +1097,19 @@ void launchInitialization(float* devData,
 }
 
 
-void launchTakeFirstStep(void* devResult, float* devKernelDiag,
+void launchTakeFirstStep(void* devResultT, float* devKernelDiag,
                          float* devData, int devDataPitchInFloats,
-                         float* devAlpha, float cost, int nDimension,
+                         float* devAlphaT, float cost, int nDimension,
                          int iLow, int iHigh, int kType, 
                          float parameterA, float parameterB, float parameterC,
                          dim3 blockConfig, dim3 threadConfig) {
     switch (kType) {
     case LINEAR:
-        takeFirstStep<Linear><<<blockConfig, threadConfig>>>(devResult,
+        takeFirstStep<Linear><<<blockConfig, threadConfig>>>(devResultT,
                                                              devKernelDiag,
                                                              devData,
                                                              devDataPitchInFloats,
-                                                             devAlpha,
+                                                             devAlphaT,
                                                              cost,
                                                              nDimension,
                                                              iLow,
@@ -1118,11 +1119,11 @@ void launchTakeFirstStep(void* devResult, float* devKernelDiag,
                                                              parameterC);
         break;
     case POLYNOMIAL:
-        takeFirstStep<Polynomial><<<blockConfig, threadConfig>>>(devResult,
+        takeFirstStep<Polynomial><<<blockConfig, threadConfig>>>(devResultT,
                                                                  devKernelDiag,
                                                                  devData,
                                                                  devDataPitchInFloats,
-                                                                 devAlpha,
+                                                                 devAlphaT,
                                                                  cost,
                                                                  nDimension,
                                                                  iLow,
@@ -1132,11 +1133,11 @@ void launchTakeFirstStep(void* devResult, float* devKernelDiag,
                                                                  parameterC);
         break;
     case GAUSSIAN:
-        takeFirstStep<Gaussian><<<blockConfig, threadConfig>>>(devResult,
+        takeFirstStep<Gaussian><<<blockConfig, threadConfig>>>(devResultT,
                                                                devKernelDiag,
                                                                devData,
                                                                devDataPitchInFloats,
-                                                               devAlpha,
+                                                               devAlphaT,
                                                                cost,
                                                                nDimension,
                                                                iLow,
@@ -1146,11 +1147,11 @@ void launchTakeFirstStep(void* devResult, float* devKernelDiag,
                                                                parameterC);
         break;  
     case SIGMOID:
-        takeFirstStep<Sigmoid><<<blockConfig, threadConfig>>>(devResult,
+        takeFirstStep<Sigmoid><<<blockConfig, threadConfig>>>(devResultT,
                                                               devKernelDiag,
                                                               devData,
                                                               devDataPitchInFloats,
-                                                              devAlpha,
+                                                              devAlphaT,
                                                               cost,
                                                               nDimension,
                                                               iLow,
@@ -1175,7 +1176,7 @@ int firstOrderPhaseTwoSize() {
 	return size;
 }
 
-void launchFirstOrder(bool iLowCompute, bool iHighCompute, int kType, int nPoints, int nDimension, dim3 blocksConfig, dim3 threadsConfig, dim3 globalThreadsConfig, float* devData, int devDataPitchInFloats, float* devTransposedData, int devTransposedDataPitchInFloats, float* devLabels, float epsilon, float cEpsilon, float* devAlpha, float* devF, float sAlpha1Diff, float sAlpha2Diff, int iLow, int iHigh, float parameterA, float parameterB, float parameterC, float* devCache, int devCachePitchInFloats, int iLowCacheIndex, int iHighCacheIndex, int* devLocalIndicesRL, int* devLocalIndicesRH, float* devLocalFsRH, float* devLocalFsRL, float* devKernelDiag, void* devResult, float cost) {
+void launchFirstOrder(bool iLowCompute, bool iHighCompute, int kType, int nPoints, int nDimension, dim3 blocksConfig, dim3 threadsConfig, dim3 globalThreadsConfig, float* devData, int devDataPitchInFloats, float* devTransposedData, int devTransposedDataPitchInFloats, float* devLabels, float epsilon, float cEpsilon, float* devAlphaT, float* devF, float sAlpha1Diff, float sAlpha2Diff, int iLow, int iHigh, float parameterA, float parameterB, float parameterC, float* devCache, int devCachePitchInFloats, int iLowCacheIndex, int iHighCacheIndex, int* devLocalIndicesRL, int* devLocalIndicesRH, float* devLocalFsRH, float* devLocalFsRL, float* devKernelDiag, void* devResultT, float cost) {
 
   int phaseOneSize = firstOrderPhaseOneSize(iLowCompute, iHighCompute, nDimension);
   int phaseTwoSize = firstOrderPhaseTwoSize();
@@ -1183,31 +1184,31 @@ void launchFirstOrder(bool iLowCompute, bool iHighCompute, int kType, int nPoint
     if (iHighCompute == true) {
       switch (kType) {
       case LINEAR:
-        firstOrderPhaseOne <true, true, Linear><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
+        firstOrderPhaseOne <true, true, Linear><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
         break;
       case POLYNOMIAL:
-        firstOrderPhaseOne <true, true, Polynomial><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
+        firstOrderPhaseOne <true, true, Polynomial><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
         break;
       case GAUSSIAN:
-        firstOrderPhaseOne <true, true, Gaussian><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
+        firstOrderPhaseOne <true, true, Gaussian><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
         break;
       case SIGMOID:
-        firstOrderPhaseOne <true, true, Sigmoid><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
+        firstOrderPhaseOne <true, true, Sigmoid><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
         break;
       }
     } else if (iHighCompute == false) {
       switch (kType) {
       case LINEAR:
-        firstOrderPhaseOne <true, false, Linear><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
+        firstOrderPhaseOne <true, false, Linear><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
         break;
       case POLYNOMIAL:
-        firstOrderPhaseOne <true, false, Polynomial><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
+        firstOrderPhaseOne <true, false, Polynomial><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
         break;
       case GAUSSIAN:
-        firstOrderPhaseOne <true, false, Gaussian><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
+        firstOrderPhaseOne <true, false, Gaussian><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
         break;
       case SIGMOID:
-        firstOrderPhaseOne <true, false, Sigmoid><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
+        firstOrderPhaseOne <true, false, Sigmoid><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
         break;
       }
           
@@ -1216,31 +1217,31 @@ void launchFirstOrder(bool iLowCompute, bool iHighCompute, int kType, int nPoint
     if (iHighCompute == true) {
       switch (kType) {
       case LINEAR:
-        firstOrderPhaseOne <false, true, Linear><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
+        firstOrderPhaseOne <false, true, Linear><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
         break;
       case POLYNOMIAL:
-        firstOrderPhaseOne <false, true, Polynomial><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
+        firstOrderPhaseOne <false, true, Polynomial><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
         break;
       case GAUSSIAN:
-        firstOrderPhaseOne <false, true, Gaussian><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
+        firstOrderPhaseOne <false, true, Gaussian><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
         break;
       case SIGMOID:
-        firstOrderPhaseOne <false, true, Sigmoid><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
+        firstOrderPhaseOne <false, true, Sigmoid><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
         break;
       }
     } else if (iHighCompute == false) {
       switch (kType) {
       case LINEAR:
-        firstOrderPhaseOne <false, false, Linear><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
+        firstOrderPhaseOne <false, false, Linear><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
         break;
       case POLYNOMIAL:
-        firstOrderPhaseOne <false, false, Polynomial><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
+        firstOrderPhaseOne <false, false, Polynomial><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
         break;
       case GAUSSIAN:
-        firstOrderPhaseOne <false, false, Gaussian><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
+        firstOrderPhaseOne <false, false, Gaussian><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
         break;
       case SIGMOID:
-        firstOrderPhaseOne <false, false, Sigmoid><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
+        firstOrderPhaseOne <false, false, Sigmoid><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH);
         break;
       }
           
@@ -1248,16 +1249,16 @@ void launchFirstOrder(bool iLowCompute, bool iHighCompute, int kType, int nPoint
   }
   switch (kType) {
   case LINEAR:
-    firstOrderPhaseTwo<Linear><<<1, globalThreadsConfig, phaseTwoSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, devAlpha, devResult, cost, nDimension, parameterA, parameterB, parameterC, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH, blocksConfig.x);
+    firstOrderPhaseTwo<Linear><<<1, globalThreadsConfig, phaseTwoSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, devAlphaT, devResultT, cost, nDimension, parameterA, parameterB, parameterC, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH, blocksConfig.x);
     break;
   case POLYNOMIAL:
-    firstOrderPhaseTwo<Polynomial><<<1, globalThreadsConfig, phaseTwoSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, devAlpha, devResult, cost, nDimension, parameterA, parameterB, parameterC, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH, blocksConfig.x);
+    firstOrderPhaseTwo<Polynomial><<<1, globalThreadsConfig, phaseTwoSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, devAlphaT, devResultT, cost, nDimension, parameterA, parameterB, parameterC, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH, blocksConfig.x);
     break;
   case GAUSSIAN:
-    firstOrderPhaseTwo<Gaussian><<<1, globalThreadsConfig, phaseTwoSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, devAlpha, devResult, cost, nDimension, parameterA, parameterB, parameterC, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH, blocksConfig.x);
+    firstOrderPhaseTwo<Gaussian><<<1, globalThreadsConfig, phaseTwoSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, devAlphaT, devResultT, cost, nDimension, parameterA, parameterB, parameterC, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH, blocksConfig.x);
     break;
   case SIGMOID:
-    firstOrderPhaseTwo<Sigmoid><<<1, globalThreadsConfig, phaseTwoSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, devAlpha, devResult, cost, nDimension, parameterA, parameterB, parameterC, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH, blocksConfig.x);
+    firstOrderPhaseTwo<Sigmoid><<<1, globalThreadsConfig, phaseTwoSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, devAlphaT, devResultT, cost, nDimension, parameterA, parameterB, parameterC, devLocalIndicesRL, devLocalIndicesRH, devLocalFsRL, devLocalFsRH, blocksConfig.x);
     break;
   }
    
@@ -1287,7 +1288,7 @@ int secondOrderPhaseFourSize() {
 	return size;
 }
 
-void launchSecondOrder(bool iLowCompute, bool iHighCompute, int kType, int nPoints, int nDimension, dim3 blocksConfig, dim3 threadsConfig, dim3 globalThreadsConfig, float* devData, int devDataPitchInFloats, float* devTransposedData, int devTransposedDataPitchInFloats, float* devLabels, float epsilon, float cEpsilon, float* devAlpha, float* devF, float sAlpha1Diff, float sAlpha2Diff, int iLow, int iHigh, float parameterA, float parameterB, float parameterC, Cache* kernelCache, float* devCache, int devCachePitchInFloats, int iLowCacheIndex, int iHighCacheIndex, int* devLocalIndicesRH, float* devLocalFsRH, float* devLocalFsRL, int* devLocalIndicesMaxObj, float* devLocalObjsMaxObj, float* devKernelDiag, void* devResult, float* hostResult, float cost, int iteration) {
+void launchSecondOrder(bool iLowCompute, bool iHighCompute, int kType, int nPoints, int nDimension, dim3 blocksConfig, dim3 threadsConfig, dim3 globalThreadsConfig, float* devData, int devDataPitchInFloats, float* devTransposedData, int devTransposedDataPitchInFloats, float* devLabels, float epsilon, float cEpsilon, float* devAlphaT, float* devF, float sAlpha1Diff, float sAlpha2Diff, int iLow, int iHigh, float parameterA, float parameterB, float parameterC, Cache* kernelCache, float* devCache, int devCachePitchInFloats, int iLowCacheIndex, int iHighCacheIndex, int* devLocalIndicesRH, float* devLocalFsRH, float* devLocalFsRL, int* devLocalIndicesMaxObj, float* devLocalObjsMaxObj, float* devKernelDiag, void* devResultT, float* train_result, float cost, int iteration) {
 
   int phaseOneSize = secondOrderPhaseOneSize(iLowCompute, iHighCompute, nDimension);
   int phaseTwoSize = secondOrderPhaseTwoSize();
@@ -1296,31 +1297,31 @@ void launchSecondOrder(bool iLowCompute, bool iHighCompute, int kType, int nPoin
     if (iHighCompute == true) {
       switch (kType) {
       case LINEAR:
-        secondOrderPhaseOne <true, true, Linear><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
+        secondOrderPhaseOne <true, true, Linear><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
         break;
       case POLYNOMIAL:
-        secondOrderPhaseOne <true, true, Polynomial><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
+        secondOrderPhaseOne <true, true, Polynomial><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
         break;
       case GAUSSIAN:
-        secondOrderPhaseOne <true, true, Gaussian><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
+        secondOrderPhaseOne <true, true, Gaussian><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
         break;
       case SIGMOID:
-        secondOrderPhaseOne <true, true, Sigmoid><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
+        secondOrderPhaseOne <true, true, Sigmoid><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
         break;
       }
     } else if (iHighCompute == false) {
       switch (kType) {
       case LINEAR:
-        secondOrderPhaseOne <true, false, Linear><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
+        secondOrderPhaseOne <true, false, Linear><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
         break;
       case POLYNOMIAL:
-        secondOrderPhaseOne <true, false, Polynomial><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
+        secondOrderPhaseOne <true, false, Polynomial><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
         break;
       case GAUSSIAN:
-        secondOrderPhaseOne <true, false, Gaussian><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
+        secondOrderPhaseOne <true, false, Gaussian><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
         break;
       case SIGMOID:
-        secondOrderPhaseOne <true, false, Sigmoid><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
+        secondOrderPhaseOne <true, false, Sigmoid><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
         break;
       }
           
@@ -1329,31 +1330,31 @@ void launchSecondOrder(bool iLowCompute, bool iHighCompute, int kType, int nPoin
     if (iHighCompute == true) {
       switch (kType) {
       case LINEAR:
-        secondOrderPhaseOne <false, true, Linear><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
+        secondOrderPhaseOne <false, true, Linear><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
         break;
       case POLYNOMIAL:
-        secondOrderPhaseOne <false, true, Polynomial><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
+        secondOrderPhaseOne <false, true, Polynomial><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
         break;
       case GAUSSIAN:
-        secondOrderPhaseOne <false, true, Gaussian><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
+        secondOrderPhaseOne <false, true, Gaussian><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
         break;
       case SIGMOID:
-        secondOrderPhaseOne <false, true, Sigmoid><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
+        secondOrderPhaseOne <false, true, Sigmoid><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
         break;
       }
     } else if (iHighCompute == false) {
       switch (kType) {
       case LINEAR:
-        secondOrderPhaseOne <false, false, Linear><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
+        secondOrderPhaseOne <false, false, Linear><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
         break;
       case POLYNOMIAL:
-        secondOrderPhaseOne <false, false, Polynomial><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
+        secondOrderPhaseOne <false, false, Polynomial><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
         break;
       case GAUSSIAN:
-        secondOrderPhaseOne <false, false, Gaussian><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
+        secondOrderPhaseOne <false, false, Gaussian><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
         break;
       case SIGMOID:
-        secondOrderPhaseOne <false, false, Sigmoid><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlpha, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
+        secondOrderPhaseOne <false, false, Sigmoid><<<blocksConfig, threadsConfig, phaseOneSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, nPoints, nDimension, epsilon, cEpsilon, devAlphaT, devF, sAlpha1Diff, sAlpha2Diff, iLow, iHigh, parameterA, parameterB, parameterC, devCache, devCachePitchInFloats, iLowCacheIndex, iHighCacheIndex, devLocalIndicesRH, devLocalFsRH);
         break;
       }
           
@@ -1361,14 +1362,14 @@ void launchSecondOrder(bool iLowCompute, bool iHighCompute, int kType, int nPoin
   }
 
 
-  secondOrderPhaseTwo<<<1, globalThreadsConfig, phaseTwoSize>>>(devResult, devLocalIndicesRH, devLocalFsRH, blocksConfig.x);
+  secondOrderPhaseTwo<<<1, globalThreadsConfig, phaseTwoSize>>>(devResultT, devLocalIndicesRH, devLocalFsRH, blocksConfig.x);
    
 
-   CUDA_SAFE_CALL(cudaMemcpy((void*)hostResult, devResult, 8*sizeof(float), cudaMemcpyDeviceToHost));
+   CUDA_SAFE_CALL(cudaMemcpy((void*)train_result, devResultT, 8*sizeof(float), cudaMemcpyDeviceToHost));
     
-		//float eta = *(hostResult);
-		float bHigh = *(hostResult + 3);
-		iHigh = *((int*)hostResult + 7);
+		//float eta = *(train_result);
+		float bHigh = *(train_result + 3);
+		iHigh = *((int*)train_result + 7);
    
    kernelCache->findData(iHigh, iHighCacheIndex, iHighCompute);
  
@@ -1378,34 +1379,236 @@ void launchSecondOrder(bool iLowCompute, bool iHighCompute, int kType, int nPoin
    if (iHighCompute == true) {
      switch (kType) {
      case LINEAR:
-       secondOrderPhaseThree<true, Linear><<<blocksConfig, threadsConfig, phaseThreeSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, epsilon, cEpsilon, devAlpha, devF, bHigh, iHigh, devCache, devCachePitchInFloats, iHighCacheIndex, nDimension, nPoints, parameterA, parameterB, parameterC, devLocalFsRL, devLocalIndicesMaxObj, devLocalObjsMaxObj);
+       secondOrderPhaseThree<true, Linear><<<blocksConfig, threadsConfig, phaseThreeSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, epsilon, cEpsilon, devAlphaT, devF, bHigh, iHigh, devCache, devCachePitchInFloats, iHighCacheIndex, nDimension, nPoints, parameterA, parameterB, parameterC, devLocalFsRL, devLocalIndicesMaxObj, devLocalObjsMaxObj);
        break;
      case POLYNOMIAL:
-       secondOrderPhaseThree<true, Polynomial><<<blocksConfig, threadsConfig, phaseThreeSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, epsilon, cEpsilon, devAlpha, devF, bHigh, iHigh, devCache, devCachePitchInFloats, iHighCacheIndex, nDimension, nPoints, parameterA, parameterB, parameterC, devLocalFsRL, devLocalIndicesMaxObj, devLocalObjsMaxObj);
+       secondOrderPhaseThree<true, Polynomial><<<blocksConfig, threadsConfig, phaseThreeSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, epsilon, cEpsilon, devAlphaT, devF, bHigh, iHigh, devCache, devCachePitchInFloats, iHighCacheIndex, nDimension, nPoints, parameterA, parameterB, parameterC, devLocalFsRL, devLocalIndicesMaxObj, devLocalObjsMaxObj);
        break;
      case GAUSSIAN:
-       secondOrderPhaseThree<true, Gaussian><<<blocksConfig, threadsConfig, phaseThreeSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, epsilon, cEpsilon, devAlpha, devF, bHigh, iHigh, devCache, devCachePitchInFloats, iHighCacheIndex, nDimension, nPoints, parameterA, parameterB, parameterC, devLocalFsRL, devLocalIndicesMaxObj, devLocalObjsMaxObj);
+       secondOrderPhaseThree<true, Gaussian><<<blocksConfig, threadsConfig, phaseThreeSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, epsilon, cEpsilon, devAlphaT, devF, bHigh, iHigh, devCache, devCachePitchInFloats, iHighCacheIndex, nDimension, nPoints, parameterA, parameterB, parameterC, devLocalFsRL, devLocalIndicesMaxObj, devLocalObjsMaxObj);
        break;
      case SIGMOID:
-       secondOrderPhaseThree<true, Sigmoid><<<blocksConfig, threadsConfig, phaseThreeSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, epsilon, cEpsilon, devAlpha, devF, bHigh, iHigh, devCache, devCachePitchInFloats, iHighCacheIndex, nDimension, nPoints, parameterA, parameterB, parameterC, devLocalFsRL, devLocalIndicesMaxObj, devLocalObjsMaxObj);
+       secondOrderPhaseThree<true, Sigmoid><<<blocksConfig, threadsConfig, phaseThreeSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, epsilon, cEpsilon, devAlphaT, devF, bHigh, iHigh, devCache, devCachePitchInFloats, iHighCacheIndex, nDimension, nPoints, parameterA, parameterB, parameterC, devLocalFsRL, devLocalIndicesMaxObj, devLocalObjsMaxObj);
        break;
      }
    } else {
      switch (kType) {
      case LINEAR:
-       secondOrderPhaseThree<false, Linear><<<blocksConfig, threadsConfig, phaseThreeSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, epsilon, cEpsilon, devAlpha, devF, bHigh, iHigh, devCache, devCachePitchInFloats, iHighCacheIndex, nDimension, nPoints, parameterA, parameterB, parameterC, devLocalFsRL, devLocalIndicesMaxObj, devLocalObjsMaxObj);
+       secondOrderPhaseThree<false, Linear><<<blocksConfig, threadsConfig, phaseThreeSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, epsilon, cEpsilon, devAlphaT, devF, bHigh, iHigh, devCache, devCachePitchInFloats, iHighCacheIndex, nDimension, nPoints, parameterA, parameterB, parameterC, devLocalFsRL, devLocalIndicesMaxObj, devLocalObjsMaxObj);
        break;
      case POLYNOMIAL:
-       secondOrderPhaseThree<false, Polynomial><<<blocksConfig, threadsConfig, phaseThreeSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, epsilon, cEpsilon, devAlpha, devF, bHigh, iHigh, devCache, devCachePitchInFloats, iHighCacheIndex, nDimension, nPoints, parameterA, parameterB, parameterC, devLocalFsRL, devLocalIndicesMaxObj, devLocalObjsMaxObj);
+       secondOrderPhaseThree<false, Polynomial><<<blocksConfig, threadsConfig, phaseThreeSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, epsilon, cEpsilon, devAlphaT, devF, bHigh, iHigh, devCache, devCachePitchInFloats, iHighCacheIndex, nDimension, nPoints, parameterA, parameterB, parameterC, devLocalFsRL, devLocalIndicesMaxObj, devLocalObjsMaxObj);
        break;
      case GAUSSIAN:
-       secondOrderPhaseThree<false, Gaussian><<<blocksConfig, threadsConfig, phaseThreeSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, epsilon, cEpsilon, devAlpha, devF, bHigh, iHigh, devCache, devCachePitchInFloats, iHighCacheIndex, nDimension, nPoints, parameterA, parameterB, parameterC, devLocalFsRL, devLocalIndicesMaxObj, devLocalObjsMaxObj);
+       secondOrderPhaseThree<false, Gaussian><<<blocksConfig, threadsConfig, phaseThreeSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, epsilon, cEpsilon, devAlphaT, devF, bHigh, iHigh, devCache, devCachePitchInFloats, iHighCacheIndex, nDimension, nPoints, parameterA, parameterB, parameterC, devLocalFsRL, devLocalIndicesMaxObj, devLocalObjsMaxObj);
        break;
      case SIGMOID:
-       secondOrderPhaseThree<false, Sigmoid><<<blocksConfig, threadsConfig, phaseThreeSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, epsilon, cEpsilon, devAlpha, devF, bHigh, iHigh, devCache, devCachePitchInFloats, iHighCacheIndex, nDimension, nPoints, parameterA, parameterB, parameterC, devLocalFsRL, devLocalIndicesMaxObj, devLocalObjsMaxObj);
+       secondOrderPhaseThree<false, Sigmoid><<<blocksConfig, threadsConfig, phaseThreeSize>>>(devData, devDataPitchInFloats, devTransposedData, devTransposedDataPitchInFloats, devLabels, devKernelDiag, epsilon, cEpsilon, devAlphaT, devF, bHigh, iHigh, devCache, devCachePitchInFloats, iHighCacheIndex, nDimension, nPoints, parameterA, parameterB, parameterC, devLocalFsRL, devLocalIndicesMaxObj, devLocalObjsMaxObj);
        break;
      }
    }
 
-   secondOrderPhaseFour<<<1, globalThreadsConfig, phaseTwoSize>>>(devLabels, devKernelDiag, devF, devAlpha, cost, iHigh, bHigh, devResult, devCache, devCachePitchInFloats, iHighCacheIndex, devLocalFsRL, devLocalIndicesMaxObj, devLocalObjsMaxObj, blocksConfig.x, iteration);
+   secondOrderPhaseFour<<<1, globalThreadsConfig, phaseTwoSize>>>(devLabels, devKernelDiag, devF, devAlphaT, cost, iHigh, bHigh, devResultT, devCache, devCachePitchInFloats, iHighCacheIndex, devLocalFsRL, devLocalIndicesMaxObj, devLocalObjsMaxObj, blocksConfig.x, iteration);
 } 
+
+// ====================== CLASSIFY KERNELS ============================
+
+/************
+ * This function computes self dot products (Euclidean norm squared) for every vector in an array
+ * @param devSource the vectors, in column major format
+ * @param devSourcePitchInFloats the pitch of each row of the vectors (this is guaranteed to be >= sourceCount.  It might be greater due to padding, to keep each row of the source vectors aligned.
+ * @param devDest a vector which will receive the self dot product
+ * @param sourceCount the number of vectors
+ * @param sourceLength the dimensionality of each vector
+ */
+__global__ void makeSelfDots(float* devSource, int devSourcePitchInFloats, float* devDest, int sourceCount, int sourceLength) {
+	float dot = 0;
+	int index = BLOCKSIZE * blockIdx.x + threadIdx.x;
+
+	if (index < sourceCount) {
+		for (int i = 0; i < sourceLength; i++) {
+			float currentElement = *(devSource + IMUL(devSourcePitchInFloats, i) + index); 
+			dot = dot + currentElement * currentElement;
+		}
+		*(devDest + index) = dot;
+	}
+}
+
+void launchMakeSelfDots(float* devSource,
+                        int devSourcePitchInFloats,
+                        float* devDest,
+                        int sourceCount,
+                        int sourceLength,
+                        dim3 num_blocks,
+                        dim3 num_threads) { 
+
+    makeSelfDots<<<num_blocks, num_threads>>>(devSource,
+                                              devSourcePitchInFloats, devDest,
+                                              sourceCount, sourceLength);
+}
+
+/**
+ * This function constructs a matrix devDots, where devDots_(i,j) = ||data_i||^2 + ||SV_j||^2
+ * @param devDots the output array
+ * @param devDotsPitchInFloats the pitch of each row of devDots.  Guaranteed to be >= nSV
+ * @param devSVDots a vector containing ||SV_j||^2 for all j in [0, nSV - 1]
+ * @param devDataDots a vector containing ||data_i||^2 for all i in [0, nPoints - 1]
+ * @param nSV the number of Support Vectors in the classifier
+ */
+__global__ void makeDots(float* devDots, int devDotsPitchInFloats, float* devSVDots, float* devDataDots, int nSV, int nPoints) {
+	__shared__ float localSVDots[BLOCKSIZE];
+	__shared__ float localDataDots[BLOCKSIZE];
+	int svIndex = IMUL(BLOCKSIZE, blockIdx.x) + threadIdx.x;
+	
+	if (svIndex < nSV) {
+		localSVDots[threadIdx.x] = *(devSVDots + svIndex);
+	}
+	
+	int dataIndex = BLOCKSIZE * blockIdx.y + threadIdx.x;
+	if (dataIndex < nPoints) {
+		localDataDots[threadIdx.x] = *(devDataDots + dataIndex);
+	}
+	
+	__syncthreads();
+
+	dataIndex = BLOCKSIZE * blockIdx.y;
+	for(int i = 0; i < BLOCKSIZE; i++, dataIndex++) {
+		if ((svIndex < nSV) && (dataIndex < nPoints)) {
+			*(devDots + IMUL(devDotsPitchInFloats, dataIndex) + svIndex) = localSVDots[threadIdx.x] + localDataDots[i];
+		}
+	}
+}
+
+void launchMakeDots(float* devDots,
+                    int devDotsPitchInFloats,
+                    float* devSVDots,
+                    float* devDataDots,
+                    int nSV,
+                    int nPoints,
+                    dim3 num_blocks,
+                    dim3 num_threads) {
+
+    makeDots<<<num_blocks, num_threads>>>(devDots, devDotsPitchInFloats,
+                                          devSVDots, devDataDots, nSV, nPoints);
+}
+
+__device__ void computeKernels(float* devNorms, int devNormsPitchInFloats, float* devAlphaC, int nPoints, int nSV, int kernelType, float coef0, int degree,  float* localValue, int svIndex) {
+
+	if (svIndex < nSV) {
+		float alpha = devAlphaC[svIndex];
+    float norm = devNorms[IMUL(devNormsPitchInFloats, blockIdx.y) + svIndex];
+		if(kernelType == GAUSSIAN)
+		{
+			localValue[threadIdx.x] = alpha * exp(norm);
+		}
+		else if(kernelType == LINEAR)
+		{
+			localValue[threadIdx.x] = alpha * norm;
+		}
+		else if(kernelType == POLYNOMIAL)
+		{
+			localValue[threadIdx.x] = alpha * pow(norm + coef0, degree);
+		}
+		else if(kernelType == SIGMOID)
+		{
+			localValue[threadIdx.x] = alpha * tanh(norm + coef0);
+		}
+	}
+
+}
+
+/**
+ * This function completes the kernel evaluations and begins the reductions to form the classification result.
+ * @param devNorms this contains partially completed kernel evaluations.  For most kernels, devNorms_(i, j) = data_i (dot) sv_j.  For the RBF kernel, devNorms_(i, j) = -gamma*(||data_i||^2 + ||sv_j||^2 - 2* data_i (dot) sv_j)
+ * @param devNormsPitchInFloats contains the pitch of the partially completed kernel evaluations.  It will always be >= nSV.
+ * @param devAlphaC this is the alpha vector for the SVM classifier
+ * @param nPoints the number of data points
+ * @param nSV the number of support vectors
+ * @param kernelType the type of kernel
+ * @param coef0 a coefficient used in the polynomial & sigmoid kernels
+ * @param degree the degree used in the polynomial kernel
+ * @param devLocalValue the local classification results
+ * @param reduceOffset computed to begin the reduction properly
+ */
+__global__ void computeKernelsReduce(float* devNorms, int devNormsPitchInFloats, float* devAlphaC, int nPoints, int nSV, int kernelType, float coef0, int degree, float* devLocalValue, int reduceOffset) {
+	
+	/*Dynamic shared memory setup*/
+	
+	extern __shared__ float localValue[];
+  int svIndex = blockDim.x * blockIdx.x + threadIdx.x;
+  
+	computeKernels(devNorms, devNormsPitchInFloats, devAlphaC, nPoints, nSV, kernelType, coef0, degree, localValue, svIndex);
+	__syncthreads();
+	
+  /*reduction*/
+	for(int offset = reduceOffset; offset >= 1; offset = offset >> 1) {
+		if ((threadIdx.x < offset) && (svIndex + offset < nSV)) {
+			int compOffset = threadIdx.x + offset;
+      localValue[threadIdx.x] = localValue[threadIdx.x] + localValue[compOffset];
+		}
+		__syncthreads();
+	}
+	if (threadIdx.x == 0) {
+		devLocalValue[blockIdx.x + gridDim.x*blockIdx.y] = localValue[0];
+	}
+}
+
+void launchComputeKernelsReduce(float* devNorms,
+                                int devNormsPitchInFloats,
+                                float* devAlphaC,
+                                int nPoints, int nSV,
+                                int kernelType, float coef0,
+                                int degree, float* devLocalValue,
+                                int reduceOffset,
+                                dim3 num_blocks,
+                                dim3 num_threads,
+                                int shared_size) {
+
+    computeKernelsReduce<<<num_blocks, num_threads, shared_size>>>(devNorms, 
+                                                                   devNormsPitchInFloats,
+                                                                   devAlphaC, 
+                                                                   nPoints, nSV, 
+                                                                   kernelType, coef0,
+                                                                   degree, devLocalValue,
+                                                                   reduceOffset);
+}
+
+/*Second stage reduce and cleanup function*/ 
+__global__ void doClassification(float* devResultC, float b, float* devLocalValue, int reduceOffset, int nPoints) {
+	
+	extern __shared__ float localValue[];
+	
+	
+  localValue[threadIdx.x] = devLocalValue[blockDim.x*blockIdx.y + threadIdx.x];
+  __syncthreads();
+  for(int offset = reduceOffset; offset >= 1; offset = offset >> 1) {
+    if (threadIdx.x < offset) {
+      int compOffset = threadIdx.x + offset;
+      if (compOffset < blockDim.x) {
+        localValue[threadIdx.x] = localValue[threadIdx.x] + localValue[compOffset];
+      }
+    }
+    __syncthreads();
+  }
+
+	float sumResult = localValue[0];
+	if (threadIdx.x == 0) {
+		sumResult += b;
+		devResultC[blockIdx.y] = sumResult;
+	}
+}
+
+void launchDoClassification(float* devResultC,
+                            float b,
+                            float* devLocalValue,
+                            int reduceOffset,
+                            int nPoints,
+                            dim3 num_blocks,
+                            dim3 num_threads,
+                            int shared_size) {
+
+    doClassification<<<num_blocks, num_threads, shared_size>>>(devResultC, b,
+                                                               devLocalValue,
+                                                               reduceOffset,
+                                                               nPoints);
+}

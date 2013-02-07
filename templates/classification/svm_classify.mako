@@ -70,7 +70,7 @@ void classify(int nData,
 	dim3 reduceGrid(1, nPoints);
 	dim3 reduceBlock(mapGrid.x, 1);
 
-	int devDataPitchInFloats;
+    int devDataPitchInFloats = devDataPitch/sizeof(float);
 	float* devDataDots;
 	CUDA_SAFE_CALL(cudaMalloc((void**)&devDataDots, sizeof(float)*nPoints));
 	CUDA_SAFE_CALL(cudaMalloc((void**)&devLocalValue, sizeof(float)*mapGrid.x*mapGrid.y));
@@ -200,12 +200,28 @@ void classify(int nData,
                                reduceOffset, mapGrid.x, reduceGrid,
                                reduceBlock, sharedSize);
 	
-		cudaThreadSynchronize(); //unnecessary..onyl for timing..
+		cudaThreadSynchronize(); //unnecessary..only for timing..
 		cudaMemcpy(classify_result+dataoffset, devResultC, nPoints*sizeof(float), cudaMemcpyDeviceToHost);
-
 		iteration++;
 	}
-	
+
+    float class1Label = 1.0;
+    float class2Label = -1.0;
+
+    int confusionMatrix[] = {0, 0, 0, 0};
+	for (int i = 0; i < total_nPoints; i++) {
+		if ((labels[i] == class2Label) && (classify_result[i] < 0)) {
+			confusionMatrix[0]++;
+		} else if ((labels[i] == class2Label) && (classify_result[i] >= 0)) {
+			confusionMatrix[1]++;
+		} else if ((labels[i] == class1Label) && (classify_result[i] < 0)) {
+			confusionMatrix[2]++;
+		} else if ((labels[i] == class1Label) && (classify_result[i] >= 0)) {
+			confusionMatrix[3]++;
+		}
+	}
+	printf("Accuracy: %f% (%d / %d) \n", (float)(confusionMatrix[0] + confusionMatrix[3])*100.0/((float)total_nPoints),confusionMatrix[0]+confusionMatrix[3], total_nPoints);
+
 	CUDA_SAFE_CALL(cudaFree(devLocalValue));
 	CUDA_SAFE_CALL(cudaFree(devDots));
 	CUDA_SAFE_CALL(cudaFree(devSVDots));

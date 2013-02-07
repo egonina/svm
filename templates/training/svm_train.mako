@@ -38,6 +38,9 @@ PyObject* train(int nPoints, int nDimension,
     }
     printf("Cost: %f, Tolerance: %f, Epsilon: %f\n", cost, tolerance, epsilon);
     
+    // Determine the number of thread blocks based on the number of training points
+    int blockWidth = intDivideRoundUp(nPoints, ${num_threads});
+    
     // Allocate kernel diagonal elements (?) on the GPU
     float* devKernelDiag;
     CUDA_SAFE_CALL(cudaMalloc((void**)&devKernelDiag, nPoints*sizeof(float)));
@@ -45,9 +48,6 @@ PyObject* train(int nPoints, int nDimension,
     // Allocate the error array on the GPU
     float* devF;
     CUDA_SAFE_CALL(cudaMalloc((void**)&devF, nPoints*sizeof(float)));
-    
-    // Determine the number of thread blocks based on the number of training points
-    int blockWidth = intDivideRoundUp(nPoints, ${num_threads});
     
     // Allocate helper data structures on the GPU
     float* devLocalFsRL;
@@ -153,7 +153,6 @@ PyObject* train(int nPoints, int nDimension,
     dim3 reduceThreads(${num_threads});
       
     for (iteration = 1; true; iteration++) {
-    
     	if (bLow <= bHigh + 2*tolerance) {
     		break; //Convergence!!
     	}
@@ -222,6 +221,8 @@ PyObject* train(int nPoints, int nDimension,
     printf("bLow: %f, bHigh: %f\n", bLow, bHigh);
     kernelCache.printStatistics();
     CUDA_SAFE_CALL(cudaMemcpy((void*)alphaT, devAlphaT, nPoints*sizeof(float), cudaMemcpyDeviceToHost)); 
+    
+    // Deallocate all locally allocated GPU memory
     cudaFree(devF);
     cudaFree(devCache);
     cudaFree(devLocalIndicesRL);

@@ -155,12 +155,12 @@ void alloc_train_result_on_GPU() {
 
 void alloc_support_vectors_on_GPU(int nSV, int nDimension) {
 	CUDA_SAFE_CALL(cudaMallocPitch((void**)&devSV, &devSVPitch, nSV*sizeof(float), nDimension));
+	devSVPitchInFloats = ((int)devSVPitch) / sizeof(float);
     CUT_CHECK_ERROR("Alloc SVs on GPU failed: ");
 }
 
 void copy_support_vectors_CPU_to_GPU(int nSV, int nDimension) {
 	CUDA_SAFE_CALL(cudaMemcpy2D(devSV, devSVPitch, support_vectors, nSV*sizeof(float), nSV*sizeof(float), nDimension, cudaMemcpyHostToDevice));
-	devSVPitchInFloats = ((int)devSVPitch) / sizeof(float);
     CUT_CHECK_ERROR("Copy SVs to GPU failed: ");
 }
 
@@ -198,10 +198,10 @@ void dealloc_host_data_on_CPU() {
 
 void dealloc_point_data_on_GPU(){
     cudaFree(devData);
-    CUT_CHECK_ERROR("Dealloc point data on GPU failed: ");
     dealloc_transposed_point_data_on_CPU();
     dealloc_transposed_point_data_on_GPU();
     dealloc_host_data_on_CPU();
+    CUT_CHECK_ERROR("Dealloc point data on GPU failed: ");
 }
 
 void dealloc_labels_on_GPU(){
