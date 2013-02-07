@@ -47,5 +47,10 @@ class SyntheticDataTests(unittest.TestCase):
         svm = SVM()
         a = svm.train(self.points, self.labels, "linear")
 
+    def test_training_and_classify_once(self):
+        svm = SVM()
+        a = svm.train(self.points, self.labels, "linear")
+        a = svm.classify(self.points, self.labels)
+
 if __name__ == '__main__':
     unittest.main()

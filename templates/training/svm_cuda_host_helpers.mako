@@ -1,12 +1,13 @@
+// ============ TRAIN Data Structures =========
 // GPU data structure pointers
 float* devData;
 float* devTransposedData;
 size_t devTransposedDataPitch;
 float* devLabels;
 float* devKernelDiag;
-float* devAlpha;
+float* devAlphaT;
 float* devF;
-void* devResult;
+void* devResultT;
 
 // GPU Cache
 float* devCache;
@@ -22,6 +23,13 @@ float* devLocalObjsMaxObj;
 int* devLocalIndicesMaxObj;
 size_t rowPitch;
 
+// ============ CLASSIFY Data Structures =========
+float* devSV;
+size_t devSVPitch;
+int devSVPitchInFloats;
+float* devResultC;
+
+float* devAlphaC;
 
 // For now, assume data, labels and alphas are passed from Python
 // all other data structures are internal...
@@ -44,6 +52,8 @@ size_t rowPitch;
     } }
 
 #  define CUDA_SAFE_CALL( call)     CUDA_SAFE_CALL_NO_SYNC(call);            \
+
+// ========================== TRAIN ===============================
 
 // Keep the following two functions here, called internally when
 // allocating data on the GPU
@@ -130,15 +140,43 @@ void copy_labels_CPU_to_GPU(int nPoints) {
     CUT_CHECK_ERROR("Copy labels from CPU to GPU failed: ");
 }
 
-void alloc_alphas_on_GPU(int nPoints) {
+void alloc_train_alphas_on_GPU(int nPoints) {
     // Allocate support vectors on the GPU
-    CUDA_SAFE_CALL(cudaMalloc((void**)&devAlpha, nPoints*sizeof(float)));
-    CUT_CHECK_ERROR("Alloc alphas on GPU failed: ");
+    CUDA_SAFE_CALL(cudaMalloc((void**)&devAlphaT, nPoints*sizeof(float)));
+    CUT_CHECK_ERROR("Alloc train alphas on GPU failed: ");
 }
     
-void alloc_result_on_GPU() {
-    CUDA_SAFE_CALL(cudaMalloc(&devResult, 8*sizeof(float)));
-    CUT_CHECK_ERROR("Alloc result on GPU failed: ");
+void alloc_train_result_on_GPU() {
+    CUDA_SAFE_CALL(cudaMalloc(&devResultT, 8*sizeof(float)));
+    CUT_CHECK_ERROR("Alloc train result on GPU failed: ");
+}
+
+// ========================== CLASSIFY ===============================
+
+void alloc_support_vectors_on_GPU(int nSV, int nDimension) {
+	CUDA_SAFE_CALL(cudaMallocPitch((void**)&devSV, &devSVPitch, nSV*sizeof(float), nDimension));
+    CUT_CHECK_ERROR("Alloc SVs on GPU failed: ");
+}
+
+void copy_support_vectors_CPU_to_GPU(int nSV, int nDimension) {
+	CUDA_SAFE_CALL(cudaMemcpy2D(devSV, devSVPitch, support_vectors, nSV*sizeof(float), nSV*sizeof(float), nDimension, cudaMemcpyHostToDevice));
+	devSVPitchInFloats = ((int)devSVPitch) / sizeof(float);
+    CUT_CHECK_ERROR("Copy SVs to GPU failed: ");
+}
+
+void alloc_classify_alphas_on_GPU(int nSV) {
+	CUDA_SAFE_CALL(cudaMalloc((void**)&devAlphaC, nSV*sizeof(float)));
+    CUT_CHECK_ERROR("Alloc classify alphas on GPU failed: ");
+}
+
+void copy_classify_alphas_CPU_to_GPU(int nSV) {
+	CUDA_SAFE_CALL(cudaMemcpy(devAlphaC, alphaC, nSV*sizeof(float), cudaMemcpyHostToDevice));
+    CUT_CHECK_ERROR("Copy classify alphas to GPU failed: ");
+}
+
+void alloc_classify_result_on_GPU(int nPoints) {
+	CUDA_SAFE_CALL(cudaMalloc((void**)&devResultC, nPoints*sizeof(float)));
+    CUT_CHECK_ERROR("Alloc classify result on GPU failed: ");
 }
 
 void dealloc_transposed_point_data_on_CPU() {
@@ -171,24 +209,37 @@ void dealloc_labels_on_GPU(){
     CUT_CHECK_ERROR("Dealloc labels on GPU failed: ");
 }
 
-void dealloc_alphas_on_GPU(){
-    cudaFree(devAlpha);
-    CUT_CHECK_ERROR("Dealloc alphas on GPU failed: ");
+void dealloc_train_alphas_on_GPU(){
+    cudaFree(devAlphaT);
+    CUT_CHECK_ERROR("Dealloc train alphas on GPU failed: ");
 }
 
-void dealloc_result_on_GPU(){
-    cudaFree(devResult);
+void dealloc_classify_alphas_on_GPU(){
+    cudaFree(devAlphaC);
+    CUT_CHECK_ERROR("Dealloc classify alphas on GPU failed: ");
+}
+
+void dealloc_train_result_on_GPU(){
+    cudaFree(devResultT);
     CUT_CHECK_ERROR("Dealloc result on GPU failed: ");
 }
 
-void printModel(const char* outputFile, int kernel_type, float gamma, float coef0, float degree, float* alpha, float* labels, float* data, int nPoints, int nDimension, float epsilon) { 
+void dealloc_classify_result_on_GPU(){
+    cudaFree(devResultC);
+    CUT_CHECK_ERROR("Dealloc result on GPU failed: ");
+}
 
-	printf("Output File: %s\n", outputFile);
-	FILE* outputFilePointer = fopen(outputFile, "w");
-	if (outputFilePointer == NULL) {
-		printf("Can't write %s\n", outputFile);
-		exit(1);
-	}
+void dealloc_support_vectors_on_GPU(){
+    cudaFree(devSV);
+    CUT_CHECK_ERROR("Dealloc alphas on GPU failed: ");
+}
+
+int storeModel(int kernel_type, float gamma, float coef0,
+               float degree, float* alpha, float* labels,
+               float* data, int nPoints,
+               int nDimension, float epsilon,
+               float** support_vectors,
+               float** out_alphas) { 
 
 	int nSV = 0;
 	int pSV = 0;
@@ -202,46 +253,23 @@ void printModel(const char* outputFile, int kernel_type, float gamma, float coef
 		}
 	}
 
-  bool printGamma = false;
-  bool printCoef0 = false;
-  bool printDegree = false;
-  if (kernel_type == 2) {
-    printGamma = true;
-    printCoef0 = true;
-    printDegree = true;
-  } else if (kernel_type == 1) {
-    printGamma = true;
-  } else if (kernel_type == 3) {
-    printGamma = true;
-    printCoef0 = true;
-  }
-	
-	fprintf(outputFilePointer, "svm_type c_svc\n");
-	fprintf(outputFilePointer, "kernel_type %d\n", kernel_type);
-  if (printDegree) {
-    fprintf(outputFilePointer, "degree %f\n", degree);
-  }
-  if (printGamma) {
-    fprintf(outputFilePointer, "gamma %f\n", gamma);
-  }
-  if (printCoef0) {
-    fprintf(outputFilePointer, "coef0 %f\n", coef0);
-  }
-	fprintf(outputFilePointer, "nr_class 2\n");
-	fprintf(outputFilePointer, "total_sv %d\n", nSV + pSV);
-	//fprintf(outputFilePointer, "rho %.10f\n", kp.b);
-	fprintf(outputFilePointer, "label 1 -1\n");
-	fprintf(outputFilePointer, "nr_sv %d %d\n", pSV, nSV);
-	fprintf(outputFilePointer, "SV\n");
-	for (int i = 0; i < nPoints; i++) {
-		if (alpha[i] > epsilon) {
-			fprintf(outputFilePointer, "%.10f ", labels[i]*alpha[i]);
-			for (int j = 0; j < nDimension; j++) {
-				fprintf(outputFilePointer, "%d:%.10f ", j+1, data[j*nPoints + i]);
-			}
-			fprintf(outputFilePointer, "\n");
-		}
-	}
-	fclose(outputFilePointer);
-}
+  int total_sv = pSV + nSV;
+  float* local_sv = (float*)malloc(total_sv * nDimension * sizeof(float));
+  float* local_alphas = (float*)malloc(total_sv * sizeof(float));
 
+  int index = 0;
+  for (int i = 0; i < nPoints; i++) {
+  	if (alpha[i] > epsilon) {
+  		local_alphas[index] =  labels[i]*alpha[i];
+  		for (int j = 0; j < nDimension; j++) {
+  			local_sv[j*total_sv + index] =  data[j*nPoints + i];
+  		}
+        index++;
+  	}
+  }
+
+  *(support_vectors) = local_sv; 
+  *(out_alphas) = local_alphas; 
+
+  return total_sv;
+}

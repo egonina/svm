@@ -13,8 +13,11 @@ enum KernelType {
 float *data;
 float *labels;
 float *transposedData;
-float *alpha;
-float *hostResult;
+float *alphaT;
+float *alphaC;
+float *train_result;
+float *classify_result;
+float* support_vectors;
 
 float *hostData;
 bool hostDataAlloced;
@@ -31,10 +34,21 @@ void alloc_labels_on_CPU(PyObject *input_labels) {
   labels = ((float*)PyArray_DATA(input_labels));
 }
 
-void alloc_alphas_on_CPU(PyObject *input_alphas) {
-  alpha = ((float*)PyArray_DATA(input_alphas));
+void alloc_train_alphas_on_CPU(PyObject *input_alphas) {
+  alphaT = ((float*)PyArray_DATA(input_alphas));
 }
 
-void alloc_result_on_CPU(PyObject *input_result) {
-  hostResult = ((float*)PyArray_DATA(input_result));
+void alloc_classify_alphas_on_CPU(PyObject *input_alphas) {
+  alphaC = ((float*)PyArray_DATA(input_alphas));
+}
+void alloc_train_result_on_CPU(PyObject *input_result) {
+  train_result = ((float*)PyArray_DATA(input_result));
+}
+
+void alloc_classify_result_on_CPU(PyObject *input_result) {
+  classify_result = ((float*)PyArray_DATA(input_result));
+}
+
+void alloc_support_vectors_on_CPU(PyObject *sv) {
+  support_vectors= ((float*)PyArray_DATA(sv));
 }

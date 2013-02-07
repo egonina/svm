@@ -3,8 +3,6 @@
 
 #define BLOCKSIZE 512 
 #define IMUL(a, b) __mul24(a, b)
-#define MAX_PITCH 262144
-#define MAX_POINTS (MAX_PITCH/sizeof(float) - 2)
 
 #ifdef __DEVICE_EMULATION__
 #define SYNC __syncthreads()
