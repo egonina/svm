@@ -263,7 +263,7 @@ PyObject* train(int nPoints, int nDimension,
     npLen_a[0] = {total_sv};
     PyObject* support_vectors = PyArray_SimpleNewFromData(1, npLen_sv, PyArray_FLOAT, sv);
     PyObject* out_alphas = PyArray_SimpleNewFromData(1, npLen_a, PyArray_FLOAT, out_a);
-    PyObject* rho = (PyObject*)Py_BuildValue("f", ((bHigh + bLow) / 2));
+    PyObject* rho = (PyObject*)Py_BuildValue("f", -(((bHigh + bLow) / 2)));
     PyObject* nsv = (PyObject*)Py_BuildValue("i", total_sv);
 
     PyTupleObject *ret = (PyTupleObject*)PyTuple_New(4);

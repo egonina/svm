@@ -174,14 +174,15 @@ class SVM(object):
     
     #Internal functions to allocate and deallocate component and event data on the CPU and GPU
     def internal_alloc_point_data(self, X):
-        if SVM.point_data_cpu_copy is not None:
-            self.internal_free_point_data()
-        self.get_asp_mod().alloc_point_data_on_CPU(X)
-        SVM.point_data_cpu_copy = X
-        if SVM.use_cuda:
-            self.get_asp_mod().alloc_point_data_on_GPU(X.shape[0], X.shape[1])
-            self.get_asp_mod().copy_point_data_CPU_to_GPU(X.shape[1])
-            SVM.point_data_gpu_copy = X
+        if SVM.point_data_cpu_copy != X.__array_interface__['data'][0]:
+            if SVM.point_data_cpu_copy is not None:
+                self.internal_free_point_data()
+            self.get_asp_mod().alloc_point_data_on_CPU(X)
+            SVM.point_data_cpu_copy = X.__array_interface__['data'][0]
+            if SVM.use_cuda:
+                self.get_asp_mod().alloc_point_data_on_GPU(X.shape[0], X.shape[1])
+                self.get_asp_mod().copy_point_data_CPU_to_GPU(X.shape[1])
+                SVM.point_data_gpu_copy = X.__array_interface__['data'][0]
 
     def internal_free_point_data(self):
         if SVM is None: return
@@ -192,14 +193,15 @@ class SVM(object):
             SVM.point_data_gpu_copy = None
                 
     def internal_alloc_labels(self, L):
-        if SVM.labels_cpu_copy is not None:
-            self.internal_free_labels()
-        self.get_asp_mod().alloc_labels_on_CPU(L)
-        SVM.labels_cpu_copy = L 
-        if SVM.use_cuda:
-            self.get_asp_mod().alloc_labels_on_GPU(L.shape[0])
-            self.get_asp_mod().copy_labels_CPU_to_GPU(L.shape[0])
-            SVM.labels_gpu_copy = L 
+        if SVM.point_data_cpu_copy != L.__array_interface__['data'][0]:
+            if SVM.labels_cpu_copy is not None:
+                self.internal_free_labels()
+            self.get_asp_mod().alloc_labels_on_CPU(L)
+            SVM.labels_cpu_copy = L.__array_interface__['data'][0]
+            if SVM.use_cuda:
+                self.get_asp_mod().alloc_labels_on_GPU(L.shape[0])
+                self.get_asp_mod().copy_labels_CPU_to_GPU(L.shape[0])
+                SVM.labels_gpu_copy = L.__array_interface__['data'][0]  
             
     def internal_free_labels(self):
         if SVM is None: return
@@ -210,13 +212,14 @@ class SVM(object):
             SVM.labels_gpu_copy = None
 
     def internal_alloc_train_alphas(self, A):
-        if SVM.train_alphas_cpu_copy is not None:
-            self.internal_free_train_alphas()
-        self.get_asp_mod().alloc_train_alphas_on_CPU(A)
-        SVM.train_alphas_cpu_copy = A 
-        if SVM.use_cuda:
-            self.get_asp_mod().alloc_train_alphas_on_GPU(A.shape[0])
-            SVM.train_alphas_gpu_copy = A 
+        if SVM.point_data_cpu_copy != A.__array_interface__['data'][0]:
+             if SVM.train_alphas_cpu_copy is not None:
+                 self.internal_free_train_alphas()
+             self.get_asp_mod().alloc_train_alphas_on_CPU(A)
+             SVM.train_alphas_cpu_copy = A.__array_interface__['data'][0] 
+             if SVM.use_cuda:
+                 self.get_asp_mod().alloc_train_alphas_on_GPU(A.shape[0])
+                 SVM.train_alphas_gpu_copy = A.__array_interface__['data'][0] 
 
     def internal_free_train_alphas(self):
         if SVM is None: return
@@ -227,14 +230,15 @@ class SVM(object):
             SVM.train_alphas_gpu_copy = None
             
     def internal_alloc_classify_alphas(self, A):
-        if SVM.classify_alphas_cpu_copy is not None:
-            self.internal_free_classify_alphas()
-        self.get_asp_mod().alloc_classify_alphas_on_CPU(A)
-        SVM.classify_alphas_cpu_copy = A 
-        if SVM.use_cuda:
-            self.get_asp_mod().alloc_classify_alphas_on_GPU(A.shape[0])
-            self.get_asp_mod().copy_classify_alphas_CPU_to_GPU(A.shape[0]);
-            SVM.classify_alphas_gpu_copy = A 
+        if SVM.point_data_cpu_copy != A.__array_interface__['data'][0]:
+            if SVM.classify_alphas_cpu_copy is not None:
+                self.internal_free_classify_alphas()
+            self.get_asp_mod().alloc_classify_alphas_on_CPU(A)
+            SVM.classify_alphas_cpu_copy = A.__array_interface__['data'][0] 
+            if SVM.use_cuda:
+                self.get_asp_mod().alloc_classify_alphas_on_GPU(A.shape[0])
+                self.get_asp_mod().copy_classify_alphas_CPU_to_GPU(A.shape[0]);
+                SVM.classify_alphas_gpu_copy = A.__array_interface__['data'][0] 
 
     def internal_free_classify_alphas(self):
         if SVM is None: return
@@ -245,14 +249,15 @@ class SVM(object):
             SVM.classify_alphas_gpu_copy = None
 
     def internal_alloc_support_vectors(self, V):
-        if SVM.support_vectors_cpu_copy is not None:
-            self.internal_free_support_vectors()
-        self.get_asp_mod().alloc_support_vectors_on_CPU(V)
-        SVM.support_vectors_cpu_copy = V 
-        if SVM.use_cuda:
-            self.get_asp_mod().alloc_support_vectors_on_GPU(V.shape[0], V.shape[1])
-            self.get_asp_mod().copy_support_vectors_CPU_to_GPU(V.shape[0], V.shape[1]);
-            SVM.support_vectors_gpu_copy = V 
+        if SVM.point_data_cpu_copy != V.__array_interface__['data'][0]:
+            if SVM.support_vectors_cpu_copy is not None:
+                self.internal_free_support_vectors()
+            self.get_asp_mod().alloc_support_vectors_on_CPU(V)
+            SVM.support_vectors_cpu_copy = V.__array_interface__['data'][0] 
+            if SVM.use_cuda:
+                self.get_asp_mod().alloc_support_vectors_on_GPU(V.shape[0], V.shape[1])
+                self.get_asp_mod().copy_support_vectors_CPU_to_GPU(V.shape[0], V.shape[1]);
+                SVM.support_vectors_gpu_copy = V.__array_interface__['data'][0] 
 
     def internal_free_support_vectors(self):
         if SVM is None: return
@@ -263,13 +268,14 @@ class SVM(object):
             SVM.support_vectors_gpu_copy = None
 
     def internal_alloc_train_result(self, R):
-        if SVM.train_result_cpu_copy is not None:
-            self.internal_free_train_result()
-        self.get_asp_mod().alloc_train_result_on_CPU(R)
-        SVM.train_result_cpu_copy = R 
-        if SVM.use_cuda:
-            self.get_asp_mod().alloc_train_result_on_GPU()
-            SVM.train_result_gpu_copy = R 
+        if SVM.point_data_cpu_copy != R.__array_interface__['data'][0]:
+            if SVM.train_result_cpu_copy is not None:
+                self.internal_free_train_result()
+            self.get_asp_mod().alloc_train_result_on_CPU(R)
+            SVM.train_result_cpu_copy = R.__array_interface__['data'][0] 
+            if SVM.use_cuda:
+                self.get_asp_mod().alloc_train_result_on_GPU()
+                SVM.train_result_gpu_copy = R.__array_interface__['data'][0] 
 
     def internal_free_train_result(self):
         if SVM is None: return
@@ -280,13 +286,14 @@ class SVM(object):
             SVM.train_result_gpu_copy = None
 
     def internal_alloc_classify_result(self, R):
-        if SVM.classify_result_cpu_copy is not None:
-            self.internal_free_classify_result()
-        self.get_asp_mod().alloc_classify_result_on_CPU(R)
-        SVM.classify_result_cpu_copy = R 
-        if SVM.use_cuda:
-            self.get_asp_mod().alloc_classify_result_on_GPU(R.shape[0])
-            SVM.classify_result_gpu_copy = R 
+        if SVM.point_data_cpu_copy != R.__array_interface__['data'][0]:
+            if SVM.classify_result_cpu_copy is not None:
+                self.internal_free_classify_result()
+            self.get_asp_mod().alloc_classify_result_on_CPU(R)
+            SVM.classify_result_cpu_copy = R.__array_interface__['data'][0] 
+            if SVM.use_cuda:
+                self.get_asp_mod().alloc_classify_result_on_GPU(R.shape[0])
+                SVM.classify_result_gpu_copy = R.__array_interface__['data'][0] 
 
     def internal_free_classify_result(self):
         if SVM is None: return
@@ -301,6 +308,9 @@ class SVM(object):
         self.N = 0
         self.D = 0
         self.nSV = 0
+        self.support_vectors = None
+        self.alphas = None
+        self.rho = None
 
     def __del__(self):
         self.internal_free_point_data()
@@ -544,6 +554,14 @@ class SVM(object):
         classify_result = np.empty(self.N, dtype=np.float32)
 
         """
+        Check if all data structures have been allocated during training.
+        """
+        if (self.support_vectors is None) or (self.alphas is None) or (self.rho is None) or (self.nSV == 0):
+            print "Error in calling classify: svm parameters not present."
+            print "Please call train() before calling classify()"
+            sys.exit()
+        
+        """
         Allocate data structures.
         """
         self.internal_alloc_point_data(input_data)
@@ -555,7 +573,6 @@ class SVM(object):
         """
         Classify testing data.
         """
-        self.rho = -self.rho
 
         # writes to classify_result
         self.get_asp_mod().classify(self.N, self.D,
