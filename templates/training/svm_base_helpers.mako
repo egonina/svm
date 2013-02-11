@@ -7,7 +7,7 @@ enum KernelType {
   SIGMOID
 };
 
-// ========================== CPU Data Allocation Functions ==========================
+// ============= CPU Data Allocation Functions ================
 // CPU data structures
 // Need to be linked to Python
 float *data;
@@ -51,5 +51,5 @@ void alloc_classify_result_on_CPU(PyObject *input_result) {
 }
 
 void alloc_support_vectors_on_CPU(PyObject *sv) {
-  support_vectors= ((float*)PyArray_DATA(sv));
+  support_vectors = ((float*)PyArray_DATA(sv));
 }

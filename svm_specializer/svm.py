@@ -37,7 +37,7 @@ class SVMParameters(object):
             self.gamma = 0.0 
             self.coef0 = 0.0 
             self.degree = 0.0 
-        elif (kernelType == "rbf"):
+        elif (kernelType == "gaussian"):
             self.kernel_type = 1 
 
             if paramA <= 0 or paramB < 0 :
@@ -68,7 +68,7 @@ class SVMParameters(object):
 
         else:
             print "Unsupported kernel type. Please try one of the following: \
-                  'linear', 'gaussian'/'rbf', 'polynomial', 'sigmoid'"
+                  'linear', 'gaussian', 'polynomial', 'sigmoid'"
             sys.exit()
 
 class SVM(object):
@@ -298,17 +298,18 @@ class SVM(object):
 
     def __init__(self): 
         self.names_of_backends_to_use = SVM.names_of_backends_to_use
-        self.param_spaces = SVM.variant_param_default
-        self.clf = None # pure python mirror module
+        self.N = 0
+        self.D = 0
+        self.nSV = 0
 
-    #def __del__(self):
-    #    self.internal_free_point_data()
-    #    self.internal_free_labels()
-    #    self.internal_free_train_alphas()
-    #    self.internal_free_train_result()
-    #    self.internal_free_support_vectors()
-    #    self.internal_free_classify_alphas()
-    #    self.internal_free_classify_result()
+    def __del__(self):
+        self.internal_free_point_data()
+        self.internal_free_labels()
+        self.internal_free_train_alphas()
+        self.internal_free_train_result()
+        self.internal_free_support_vectors()
+        self.internal_free_classify_alphas()
+        self.internal_free_classify_result()
 
     #Called the first time a SVM instance tries to use a specialized function
     def initialize_asp_mod(self):

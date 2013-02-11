@@ -9,8 +9,8 @@ class BasicTests(unittest.TestCase):
         self.assertIsNotNone(svm)
 
 class SyntheticDataTests(unittest.TestCase):
-    def setUp(self):
-        feats = open("svm_test.svm", "r")
+    def read_data(self, in_file_name):
+        feats = open(in_file_name, "r")
         labels = []
         points = {}
         self.D = 0
@@ -33,24 +33,53 @@ class SyntheticDataTests(unittest.TestCase):
                 first_line = 0
 
         self.N = len(labels)
-        self.labels = np.array(labels, dtype=np.float32)
+        return_labels = np.array(labels, dtype=np.float32)
         points_list  = [] 
 
         for idx in points.keys():
            points_list.append(points[idx]) 
 
-        self.points = np.array(points_list, dtype=np.float32)
-        self.points = self.points.reshape(self.N, self.D)
+        return_points = np.array(points_list, dtype=np.float32)
+        return_points = return_points.reshape(self.N, self.D)
 
-    
-    def test_training_once(self):
-        svm = SVM()
-        a = svm.train(self.points, self.labels, "linear")
+        return return_labels, return_points
+
+    def setUp(self):
+        # read in training data
+        self.t1_labels, self.t1_data = self.read_data("test/sample_data/svm_train_1_small.svm")
+        self.t2_labels, self.t2_data = self.read_data("test/sample_data/svm_train_2_small.svm")
+
+        # read in training data
+        self.c_labels, self.c_data = self.read_data("test/sample_data/svm_classify_small.svm")
 
     def test_training_and_classify_once(self):
+        print "=== svm, testing train() & classify() ==="
         svm = SVM()
-        a = svm.train(self.points, self.labels, "linear")
-        a = svm.classify(self.points, self.labels)
+        svm.train(self.t1_data, self.t1_labels, "linear")
+        svm.classify(self.c_data, self.c_labels)
+
+        svm1 = SVM()
+        svm1.train(self.t2_data, self.t2_labels, "linear")
+        svm1.classify(self.c_data, self.c_labels)
+
+
+
+    #def test_training_and_classify_once(self):
+    #    print "=== svm, testing train() & classify() ==="
+    #    svm = SVM()
+    #    svm.train(self.t1_data, self.t1_labels, "linear")
+    #    svm.classify(self.c_data, self.c_labels)
+
+    #def test_training_once(self):
+    #    print "=== SVM, testing TRAIN() ==="
+    #    svm = SVM()
+    #    a = svm.train(self.t2_data, self.t2_labels, "linear")
+
+    #def test_training_twice(self):
+    #    print "=== SVM, testing TRAIN() twice ==="
+    #    svm = SVM()
+    #    a = svm.train(self.train_points, self.train_labels, "linear")
+    #    a = svm.train(self.test_points, self.test_labels, "gaussian")
 
 if __name__ == '__main__':
     unittest.main()

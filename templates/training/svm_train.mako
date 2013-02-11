@@ -8,6 +8,7 @@ PyObject* train(int nPoints, int nDimension,
     float cEpsilon = cost - epsilon;
     Controller progress(2.0, heuristicMethod, 64, nPoints);
 
+    printf("......Training SVM......\n");
     // Determine kernel type and parameters
     int kType = GAUSSIAN;
     float parameterA;
@@ -36,14 +37,13 @@ PyObject* train(int nPoints, int nDimension,
             exit(1);
         }
     }
-    printf("Cost: %f, Tolerance: %f, Epsilon: %f\n", cost, tolerance, epsilon);
     
     // Determine the number of thread blocks based on the number of training points
     int blockWidth = intDivideRoundUp(nPoints, ${num_threads});
     
     // Allocate kernel diagonal elements (?) on the GPU
     float* devKernelDiag;
-    CUDA_SAFE_CALL(cudaMalloc((void**)&devKernelDiag, nPoints*sizeof(float)));
+    CUDA_SAFE_CALL(cudaMalloc((void**)&devKernelDiag, nPoints * sizeof(float)));
     
     // Allocate the error array on the GPU
     float* devF;
@@ -51,21 +51,21 @@ PyObject* train(int nPoints, int nDimension,
     
     // Allocate helper data structures on the GPU
     float* devLocalFsRL;
-    CUDA_SAFE_CALL(cudaMalloc((void**)&devLocalFsRL, blockWidth*sizeof(float)));
+    CUDA_SAFE_CALL(cudaMalloc((void**)&devLocalFsRL, blockWidth * sizeof(float)));
     float* devLocalFsRH;
-    CUDA_SAFE_CALL(cudaMalloc((void**)&devLocalFsRH, blockWidth*sizeof(float))); 
+    CUDA_SAFE_CALL(cudaMalloc((void**)&devLocalFsRH, blockWidth * sizeof(float))); 
     int* devLocalIndicesRL;
-    CUDA_SAFE_CALL(cudaMalloc((void**)&devLocalIndicesRL, blockWidth*sizeof(int)));
+    CUDA_SAFE_CALL(cudaMalloc((void**)&devLocalIndicesRL, blockWidth * sizeof(int)));
     int* devLocalIndicesRH;
-    CUDA_SAFE_CALL(cudaMalloc((void**)&devLocalIndicesRH, blockWidth*sizeof(int)));
+    CUDA_SAFE_CALL(cudaMalloc((void**)&devLocalIndicesRH, blockWidth * sizeof(int)));
     
     float* devLocalObjsMaxObj;
-    CUDA_SAFE_CALL(cudaMalloc((void**)&devLocalObjsMaxObj, blockWidth*sizeof(float)));
+    CUDA_SAFE_CALL(cudaMalloc((void**)&devLocalObjsMaxObj, blockWidth * sizeof(float)));
     int* devLocalIndicesMaxObj;
-    CUDA_SAFE_CALL(cudaMalloc((void**)&devLocalIndicesMaxObj, blockWidth*sizeof(int)));
+    CUDA_SAFE_CALL(cudaMalloc((void**)&devLocalIndicesMaxObj, blockWidth * sizeof(int)));
     void* temp;
     size_t rowPitch;
-    CUDA_SAFE_CALL(cudaMallocPitch(&temp, &rowPitch, nPoints*sizeof(float), 2));
+    CUDA_SAFE_CALL(cudaMallocPitch(&temp, &rowPitch, nPoints * sizeof(float), 2));
     CUDA_SAFE_CALL(cudaFree(temp));
     
     // Determine the size of the cache
@@ -73,25 +73,21 @@ PyObject* train(int nPoints, int nDimension,
     size_t totalMemory;
     cuMemGetInfo(&remainingMemory, &totalMemory);
     
-    int sizeOfCache = remainingMemory/((int)rowPitch);
-    sizeOfCache = (int)((float)sizeOfCache*0.95);//If I try to grab all the memory available, it'll fail
-    if (nPoints < sizeOfCache) {
-    	sizeOfCache = nPoints;
-    }
-      	
-    printf("%zd bytes of memory found on device, %zd bytes currently free\n", totalMemory, remainingMemory);
-    printf("%d rows of kernel matrix will be cached (%d bytes per row)\n", sizeOfCache, (int)rowPitch);
+    int sizeOfCache = remainingMemory / ((int)rowPitch);
+    //If I try to grab all the memory available, it'll fail
+    sizeOfCache = (int)((float)sizeOfCache * 0.95);
+    if (nPoints < sizeOfCache) { sizeOfCache = nPoints; }
     
     // Allocate cache on the GPU
     float* devCache;
     size_t cachePitch;
-    CUDA_SAFE_CALL(cudaMallocPitch((void**)&devCache, &cachePitch, nPoints*sizeof(float), sizeOfCache));
+    CUDA_SAFE_CALL(cudaMallocPitch((void**)&devCache, &cachePitch,
+                                   nPoints * sizeof(float), sizeOfCache));
     Cache kernelCache(nPoints, sizeOfCache);
-    int devCachePitchInFloats = (int)cachePitch/(sizeof(float));
+    int devCachePitchInFloats = (int)cachePitch / (sizeof(float));
     
     cudaError_t err = cudaGetLastError();
     if(err) printf("Error: %s\n", cudaGetErrorString(err));
-    printf("Allocated Cache arrays on GPU\n");
     
     // Set number of blocks and number of threads per block
     dim3 threadsLinear(${num_threads});
@@ -101,10 +97,15 @@ PyObject* train(int nPoints, int nDimension,
     int devTransposedDataPitchInFloats = ((int)devTransposedDataPitch) >> 2;
       
     // Initialize
-    launchInitialization(devData, devDataPitchInFloats, nPoints, nDimension, kType, parameterA, parameterB, parameterC, devKernelDiag, devAlphaT, devF, devLabels, blocksLinear, threadsLinear);
+    launchInitialization(devData, devDataPitchInFloats,
+                         nPoints, nDimension, kType, parameterA,
+                         parameterB, parameterC, devKernelDiag,
+                         devAlphaT, devF, devLabels,
+                         blocksLinear, threadsLinear);
+
     err = cudaGetLastError();
     if(err) printf("Error: %s\n", cudaGetErrorString(err));
-    printf("Initialization complete\n");
+    printf(".....Initialization complete.....\n");
     
     //Choose initial points
     float bLow = 1;
@@ -113,27 +114,35 @@ PyObject* train(int nPoints, int nDimension,
     int iLow = -1;
     int iHigh = -1;
     for (int i = 0; i < nPoints; i++) {
-    	if (labels[i] < 0) {
-    		if (iLow == -1) {
-    			iLow = i;
-    			if (iHigh > -1) {
-    				i = nPoints; //Terminate
-    			}
-    		}
+        if (labels[i] < 0) {
+            if (iLow == -1) {
+                iLow = i;
+                if (iHigh > -1) {
+                    i = nPoints; //Terminate
+                }
+            }
     	} else {
-    		if (iHigh == -1) {
-    			iHigh = i;
-    			if (iLow > -1) {
-    				i = nPoints; //Terminate
-    			}
-    		}
-    	}
+            if (iHigh == -1) {
+                iHigh = i;
+                if (iLow > -1) {
+                    i = nPoints; //Terminate
+                }
+            }
+        }
     }
     
     dim3 singletonThreads(1);
     dim3 singletonBlocks(1);
-    launchTakeFirstStep(devResultT, devKernelDiag, devData, devDataPitchInFloats, devAlphaT, cost, nDimension, iLow, iHigh, kType, parameterA, parameterB, parameterC, singletonBlocks, singletonThreads);
-    CUDA_SAFE_CALL(cudaMemcpy((void*)train_result, devResultT, 8*sizeof(float), cudaMemcpyDeviceToHost));
+
+    launchTakeFirstStep(devResultT, devKernelDiag,
+                        devData, devDataPitchInFloats,
+                        devAlphaT, cost, nDimension,
+                        iLow, iHigh, kType, parameterA,
+                        parameterB, parameterC,
+                        singletonBlocks, singletonThreads);
+
+    CUDA_SAFE_CALL(cudaMemcpy((void*)train_result, devResultT,
+                   8 * sizeof(float), cudaMemcpyDeviceToHost));
     
     float alpha2Old = *(train_result + 0);
     float alpha1Old = *(train_result + 1);
@@ -151,25 +160,45 @@ PyObject* train(int nPoints, int nDimension,
     bool iHighCompute; 
     
     dim3 reduceThreads(${num_threads});
+
+    float* temp_data = (float*)malloc(sizeof(float) * nPoints * nDimension);
+    cudaMemcpy(temp_data, devData, nPoints * nDimension * sizeof(float),
+               cudaMemcpyDeviceToHost);
       
     for (iteration = 1; true; iteration++) {
-    	if (bLow <= bHigh + 2*tolerance) {
-    		break; //Convergence!!
-    	}
-    
-    	if ((iteration & 0x7ff) == 0) {
-    		printf("iteration: %d; gap: %f\n",iteration, bLow - bHigh);
-    	}
-    
-        if ((iteration & 0x7f) == 0) {
-            heuristicMethod = progress.getMethod();
-        }
+       if (bLow <= bHigh + 2 * tolerance) {
+           break; //Convergence!!
+       }
        
-	    kernelCache.findData(iHigh, iHighCacheIndex, iHighCompute);
-   	    kernelCache.findData(iLow, iLowCacheIndex, iLowCompute);
-        
-        if (heuristicMethod == FIRSTORDER) {
-            launchFirstOrder(iLowCompute, iHighCompute,
+       if ((iteration & 0x7ff) == 0) {
+           printf("iteration: %d; gap: %f\n",iteration, bLow - bHigh);
+       }
+       
+       if ((iteration & 0x7f) == 0) {
+           heuristicMethod = progress.getMethod();
+       }
+       
+       kernelCache.findData(iHigh, iHighCacheIndex, iHighCompute);
+       kernelCache.findData(iLow, iLowCacheIndex, iLowCompute);
+       
+       if (heuristicMethod == FIRSTORDER) {
+           launchFirstOrder(iLowCompute, iHighCompute,
+                            kType, nPoints, nDimension,
+                            blocksLinear, threadsLinear,
+                            reduceThreads, devData,
+                            devDataPitchInFloats, devTransposedData,
+                            devTransposedDataPitchInFloats, devLabels,
+                            epsilon, cEpsilon, devAlphaT, devF,
+                            alpha1Diff * labels[iHigh],
+                            alpha2Diff * labels[iLow], iLow, iHigh,
+                            parameterA, parameterB, parameterC,
+                            devCache, devCachePitchInFloats,
+                            iLowCacheIndex, iHighCacheIndex,
+                            devLocalIndicesRL, devLocalIndicesRH,
+                            devLocalFsRH, devLocalFsRL,
+                            devKernelDiag, devResultT, cost);
+       } else {
+           launchSecondOrder(iLowCompute, iHighCompute,
                              kType, nPoints, nDimension,
                              blocksLinear, threadsLinear,
                              reduceThreads, devData,
@@ -179,48 +208,35 @@ PyObject* train(int nPoints, int nDimension,
                              alpha1Diff * labels[iHigh],
                              alpha2Diff * labels[iLow], iLow, iHigh,
                              parameterA, parameterB, parameterC,
-                             devCache, devCachePitchInFloats,
+                             &kernelCache, devCache, devCachePitchInFloats,
                              iLowCacheIndex, iHighCacheIndex,
-                             devLocalIndicesRL, devLocalIndicesRH,
-                             devLocalFsRH, devLocalFsRL,
-                             devKernelDiag, devResultT, cost);
-          } else {
-            launchSecondOrder(iLowCompute, iHighCompute,
-                              kType, nPoints, nDimension,
-                              blocksLinear, threadsLinear,
-                              reduceThreads, devData,
-                              devDataPitchInFloats, devTransposedData,
-                              devTransposedDataPitchInFloats, devLabels,
-                              epsilon, cEpsilon, devAlphaT, devF,
-                              alpha1Diff * labels[iHigh],
-                              alpha2Diff * labels[iLow], iLow, iHigh,
-                              parameterA, parameterB, parameterC,
-                              &kernelCache, devCache, devCachePitchInFloats,
-                              iLowCacheIndex, iHighCacheIndex,
-                              devLocalIndicesRH, devLocalFsRH, devLocalFsRL,
-                              devLocalIndicesMaxObj, devLocalObjsMaxObj,
-                              devKernelDiag, devResultT,
-                              train_result, cost, iteration);
-          }
-          CUDA_SAFE_CALL(cudaMemcpy((void*)train_result, devResultT, 8*sizeof(float), cudaMemcpyDeviceToHost));
-          alpha2Old = *(train_result + 0);
-          alpha1Old = *(train_result + 1);
-          bLow = *(train_result + 2);
-          bHigh = *(train_result + 3);
-          iLow = *((int*)train_result + 6);
-          iHigh = *((int*)train_result + 7);
-          alpha2New = *(train_result + 4);
-          alpha1New = *(train_result + 5);
-          alpha1Diff = alpha1New - alpha1Old;
-          alpha2Diff = alpha2New - alpha2Old;
-          progress.addIteration(bLow-bHigh);
-          CUT_CHECK_ERROR("SMO Iteration Failed");
+                             devLocalIndicesRH, devLocalFsRH, devLocalFsRL,
+                             devLocalIndicesMaxObj, devLocalObjsMaxObj,
+                             devKernelDiag, devResultT,
+                             train_result, cost, iteration);
+       }
+
+       CUDA_SAFE_CALL(cudaMemcpy((void*)train_result, devResultT,
+                                 8 * sizeof(float), cudaMemcpyDeviceToHost));
+       alpha2Old = *(train_result + 0);
+       alpha1Old = *(train_result + 1);
+       bLow = *(train_result + 2);
+       bHigh = *(train_result + 3);
+       iLow = *((int*)train_result + 6);
+       iHigh = *((int*)train_result + 7);
+       alpha2New = *(train_result + 4);
+       alpha1New = *(train_result + 5);
+       alpha1Diff = alpha1New - alpha1Old;
+       alpha2Diff = alpha2New - alpha2Old;
+       progress.addIteration(bLow-bHigh);
+       CUT_CHECK_ERROR("SMO Iteration Failed");
     }
       
-    printf("%d iterations\n", iteration);
-    printf("bLow: %f, bHigh: %f\n", bLow, bHigh);
-    kernelCache.printStatistics();
-    CUDA_SAFE_CALL(cudaMemcpy((void*)alphaT, devAlphaT, nPoints*sizeof(float), cudaMemcpyDeviceToHost)); 
+    printf("INFO: %d iterations\n", iteration);
+    printf("INFO: bLow: %f, bHigh: %f\n", bLow, bHigh);
+    //kernelCache.printStatistics();
+    CUDA_SAFE_CALL(cudaMemcpy((void*)alphaT, devAlphaT,
+                              nPoints * sizeof(float), cudaMemcpyDeviceToHost)); 
     
     // Deallocate all locally allocated GPU memory
     cudaFree(devF);
