@@ -175,11 +175,6 @@ class SVM(object):
     
     #Internal functions to allocate and deallocate component and event data on the CPU and GPU
     def internal_alloc_point_data(self, X):
-        print "ALLOC POINTS"
-        print X.__array_interface__
-        print X.__array_interface__['descr']
-        X.__array_interface__['descr'] = [('x', 'y')]
-        print X.__array_interface__
         if SVM.point_data_cpu_copy != X.__array_interface__['data'][0]:
             if SVM.point_data_cpu_copy is not None:
                 self.internal_free_point_data()
