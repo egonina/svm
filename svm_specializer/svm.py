@@ -175,6 +175,11 @@ class SVM(object):
     
     #Internal functions to allocate and deallocate component and event data on the CPU and GPU
     def internal_alloc_point_data(self, X):
+        print "ALLOC POINTS"
+        print X.__array_interface__
+        print X.__array_interface__['descr']
+        X.__array_interface__['descr'] = [('x', 'y')]
+        print X.__array_interface__
         if SVM.point_data_cpu_copy != X.__array_interface__['data'][0]:
             if SVM.point_data_cpu_copy is not None:
                 self.internal_free_point_data()
@@ -347,11 +352,11 @@ class SVM(object):
     #Functions used in the template rendering process, specific to particular backends
 
     def insert_cuda_backend_render_func(self):
-        #param_dict['supports_float32_atomic_add'] = GMM.platform_info['cuda']['supports_float32_atomic_add']
-        cu_kern_tpl = AspTemplate.Template(filename = GMM.template_path + "templates/training/svm_cuda_kernels.mako")
+        #param_dict['supports_float32_atomic_add'] = SVM.platform_info['cuda']['supports_float32_atomic_add']
+        cu_kern_tpl = AspTemplate.Template(filename = SVM.template_path + "templates/training/svm_cuda_kernels.mako")
         cu_kern_rend = cu_kern_tpl.render()
         SVM.asp_mod.add_to_module([Line(cu_kern_rend)],'cuda')
-        c_decl_tpl = AspTemplate.Template(filename = GMM.template_path + "templates/training/svm_launch_decl.mako") 
+        c_decl_tpl = AspTemplate.Template(filename = SVM.template_path + "templates/training/svm_launch_decl.mako") 
         c_decl_rend  = c_decl_tpl.render()
         SVM.asp_mod.add_to_preamble(c_decl_rend,'c++') #TODO: <4.1 hack
         base_system_header_names = [ 'stdlib.h', 'stdio.h', 'sys/time.h']
@@ -429,7 +434,7 @@ class SVM(object):
 
     def insert_base_code_into_listed_modules(self, names_of_backends):
         #Add code to all backends that is used by all backends
-        c_base_tpl = AspTemplate.Template(filename = GMM.template_path + "templates/training/svm_base_helpers.mako")
+        c_base_tpl = AspTemplate.Template(filename = SVM.template_path + "templates/training/svm_base_helpers.mako")
         c_base_rend = c_base_tpl.render()
 
         base_system_header_names = [ 'stdlib.h', 'stdio.h', 'string.h', 'math.h', 'Python.h', 'sys/time.h', 'vector', 'list', 'numpy/arrayobject.h', 'cublas.h']
@@ -452,10 +457,10 @@ class SVM(object):
             SVM.asp_mod.add_helper_function(fname, "", 'cuda')
         
         #Add bodies of helper functions
-        c_base_tpl = AspTemplate.Template(filename = GMM.template_path + "templates/training/svm_cuda_host_helpers.mako")
+        c_base_tpl = AspTemplate.Template(filename = SVM.template_path + "templates/training/svm_cuda_host_helpers.mako")
         c_base_rend  = c_base_tpl.render()
         SVM.asp_mod.add_to_module([Line(c_base_rend)],'c++')
-        cu_base_tpl = AspTemplate.Template(filename = GMM.template_path + "templates/training/svm_cuda_device_helpers.mako")
+        cu_base_tpl = AspTemplate.Template(filename = SVM.template_path + "templates/training/svm_cuda_device_helpers.mako")
         cu_base_rend = cu_base_tpl.render()
         SVM.asp_mod.add_to_module([Line(cu_base_rend)],'cuda')
         #Add Boost interface links for helper functions
@@ -480,16 +485,16 @@ class SVM(object):
                                       "train", "classify"] 
         for fname in names_of_cuda_helper_funcs:
             SVM.asp_mod.add_helper_function(fname,"",'cuda')
-        c_base_tpl = AspTemplate.Template(filename = GMM.template_path + "templates/training/cache_controller.mako")
+        c_base_tpl = AspTemplate.Template(filename = SVM.template_path + "templates/training/cache_controller.mako")
         c_base_rend  = c_base_tpl.render()
         SVM.asp_mod.add_to_module([Line(c_base_rend)],'cuda')
 
     def insert_rendered_code_into_cuda_module(self):
         self.insert_cuda_backend_render_func()
-        cu_base_tpl = AspTemplate.Template(filename = GMM.template_path + "templates/training/svm_train.mako")
+        cu_base_tpl = AspTemplate.Template(filename = SVM.template_path + "templates/training/svm_train.mako")
         cu_base_rend = cu_base_tpl.render(num_blocks = 128, num_threads = 512)
         SVM.asp_mod.add_to_module([Line(cu_base_rend)],'c++')
-        cu_base_tpl = AspTemplate.Template(filename = GMM.template_path + "templates/classification/svm_classify.mako")
+        cu_base_tpl = AspTemplate.Template(filename = SVM.template_path + "templates/classification/svm_classify.mako")
         cu_base_rend = cu_base_tpl.render(num_blocks = 128, num_threads = 512)
         SVM.asp_mod.add_to_module([Line(cu_base_rend)],'c++')
 
