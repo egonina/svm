@@ -160,10 +160,6 @@ PyObject* train(int nPoints, int nDimension,
     bool iHighCompute; 
     
     dim3 reduceThreads(${num_threads});
-
-    float* temp_data = (float*)malloc(sizeof(float) * nPoints * nDimension);
-    cudaMemcpy(temp_data, devData, nPoints * nDimension * sizeof(float),
-               cudaMemcpyDeviceToHost);
       
     for (iteration = 1; true; iteration++) {
        if (bLow <= bHigh + 2 * tolerance) {

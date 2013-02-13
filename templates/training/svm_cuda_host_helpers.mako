@@ -58,11 +58,12 @@ float* devAlphaC;
 void align_host_data(int nPoints, int nDimension) {
     hostPitchInFloats = nPoints;
     if (devDataPitch == nPoints * sizeof(float)) {
-        printf("Data is already aligned\n");
+        //printf("Data is already aligned\n");
         hostData = data;
         hostDataAlloced = false;
     } else {
         hostPitchInFloats = devDataPitch/sizeof(float);	
+        //printf("Realigning data to pitch: %d\n", devDataPitch);
         hostData = (float*)malloc(devDataPitch * nDimension);
         hostDataAlloced = true;
         for(int i=nDimension-1; i>=0; i--) {
@@ -105,6 +106,7 @@ void copy_transposed_point_data_CPU_to_GPU(int nPoints, int nDimension) {
 }
 
 void alloc_point_data_on_GPU(int nPoints, int nDimension) {
+
     // Allocate training data on the GPU
     CUDA_SAFE_CALL(cudaMallocPitch((void**)&devData, &devDataPitch,
                    nPoints * sizeof(float), nDimension));

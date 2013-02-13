@@ -46,14 +46,27 @@ class SyntheticDataTests(unittest.TestCase):
 
     def setUp(self):
         # read in training data
-        self.t1_labels, self.t1_data = self.read_data("test/sample_data/svm_train_1_small.svm")
-        self.t2_labels, self.t2_data = self.read_data("test/sample_data/svm_train_2_small.svm")
+        self.t1_labels, self.t1_data = self.read_data("/disk1/home_user/egonina/pycasp/svm/test/sample_data/svm_train_1.svm")
+        self.t2_labels, self.t2_data = self.read_data("/disk1/home_user/egonina/pycasp/svm/test/sample_data/svm_train_2.svm")
 
         # read in training data
-        self.c_labels, self.c_data = self.read_data("test/sample_data/svm_classify_small.svm")
+        self.c_labels, self.c_data = self.read_data("/disk1/home_user/egonina/pycasp/svm/test/sample_data/svm_classify.svm")
 
     def test_training_and_classify_once(self):
-        print "=== svm, testing train() & classify() ==="
+        svm = SVM()
+        svm.train(self.t1_data, self.t1_labels, "linear")
+        svm.classify(self.c_data, self.c_labels)
+
+    def test_training_once(self):
+        svm = SVM()
+        a = svm.train(self.t2_data, self.t2_labels, "linear")
+
+    def test_training_kernels(self):
+        svm = SVM()
+        a = svm.train(self.t1_data, self.t1_labels, "linear")
+        a = svm.train(self.t2_data, self.t2_labels, "gaussian")
+
+    def test_training_and_classify_twice(self):
         svm = SVM()
         svm.train(self.t1_data, self.t1_labels, "linear")
         svm.classify(self.c_data, self.c_labels)
@@ -61,25 +74,6 @@ class SyntheticDataTests(unittest.TestCase):
         svm1 = SVM()
         svm1.train(self.t2_data, self.t2_labels, "linear")
         svm1.classify(self.c_data, self.c_labels)
-
-
-
-    #def test_training_and_classify_once(self):
-    #    print "=== svm, testing train() & classify() ==="
-    #    svm = SVM()
-    #    svm.train(self.t1_data, self.t1_labels, "linear")
-    #    svm.classify(self.c_data, self.c_labels)
-
-    #def test_training_once(self):
-    #    print "=== SVM, testing TRAIN() ==="
-    #    svm = SVM()
-    #    a = svm.train(self.t2_data, self.t2_labels, "linear")
-
-    #def test_training_twice(self):
-    #    print "=== SVM, testing TRAIN() twice ==="
-    #    svm = SVM()
-    #    a = svm.train(self.train_points, self.train_labels, "linear")
-    #    a = svm.train(self.test_points, self.test_labels, "gaussian")
 
 if __name__ == '__main__':
     unittest.main()
